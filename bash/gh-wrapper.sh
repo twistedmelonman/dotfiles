@@ -346,9 +346,10 @@ _gh_wrapper_sync_identity() {
   current="$(_gh_wrapper_keyring_login)"
 
   if [[ -n "${current}" && "${current,,}" != "${desired,,}" ]]; then
-    # Not `desired` verbatim: during the rename window the keyring still holds
-    # the pre-rename login, and `gh auth switch` to an account it does not have
-    # fails. Resolve to a login gh actually holds.
+    # Not `desired` verbatim: `gh auth switch` matches logins by exact casing
+    # and fails for an account it does not hold. Resolve to the keyring's own
+    # casing when held; otherwise pass `desired` through so the switch fails
+    # and we fail closed below.
     local target
     target="$(_gh_wrapper_resolve_switch_target "${desired}")"
     if ! command gh auth switch --hostname github.com --user "${target}" >/dev/null 2>&1; then
