@@ -8,8 +8,7 @@
 #      (regression: smartwatermelon/dotfiles#159).
 #   2. The Beacon-context heuristic for owners claimed by neither identity
 #      (checkout under the beacon dir, or forked from beacon-biosignals).
-#   3. The twistedmelonman default for everything else (smartwatermelon is a
-#      temporary alias).
+#   3. The twistedmelonman default for everything else.
 set -euo pipefail
 
 unset CDPATH
@@ -133,9 +132,9 @@ cd "${HOME}/neutral-cwd"
 
 # --- Tier 1: explicitly-claimed owners -------------------------------------
 # These win in both directions and must never depend on cwd. "Wrong current"
-# fixtures use andrewmrich, not smartwatermelon: smartwatermelon is an alias
-# of twistedmelonman until the 2026-09 rename lands, so it never triggers a
-# switch (see the alias block below).
+# fixtures use andrewmrich, not smartwatermelon: smartwatermelon/dotfiles is
+# claimed by twistedmelonman regardless of which of the three org logins
+# hosts.yml currently holds.
 assert_desired "lowercase smartwatermelon" "andrewmrich" "smartwatermelon/dotfiles" "twistedmelonman"
 assert_desired "lowercase nightowlstudiollc" "andrewmrich" "nightowlstudiollc/kebab-tax" "twistedmelonman"
 assert_desired "lowercase twistedmelonman" "andrewmrich" "twistedmelonman/old-archived" "twistedmelonman"
@@ -153,127 +152,8 @@ assert_desired "mixed-case TwistedMelonMan" "andrewmrich" "TwistedMelonMan/old-a
 assert_desired "mixed-case Beacon-BioSignals" "twistedmelonman" "Beacon-BioSignals/somerepo" "andrewmrich"
 assert_desired "mixed-case AndrewMRich" "twistedmelonman" "AndrewMRich/git-pkgs-proxy" "andrewmrich"
 
-# --- Temporary alias (remove with the alias, dev-env org-migration Step 6) ---
-# Before the rename, both tokens still report smartwatermelon. That must be
-# accepted as twistedmelonman, in both directions the wrapper compares
-# (hosts.yml here; GH_TOKEN in test-gh-wrapper-gh-token-precedence.sh).
-assert_no_switch() {
-  local label="$1" current_user="$2" repo_arg="$3"
-  rm -f "${switch_log}"
-  cat >"${HOME}/.config/gh/hosts.yml" <<EOF
-github.com:
-    user: ${current_user}
-EOF
-  if ! _gh_wrapper_sync_identity --repo "${repo_arg}" pr list; then
-    echo "FAIL: ${label} — _gh_wrapper_sync_identity returned non-zero"
-    fail=1
-    return
-  fi
-  local got
-  got="$(cat "${switch_log}" 2>/dev/null || true)"
-  if [[ -z "${got}" ]]; then
-    echo "PASS: ${label} (no switch, ${current_user} accepted)"
-  else
-    echo "FAIL: ${label} — unexpected switch attempted to '${got}'"
-    fail=1
-  fi
-}
-assert_no_switch "alias: smartwatermelon accepted for twistedmelonman" "smartwatermelon" "smartwatermelon/dotfiles"
-assert_no_switch "alias: SmartWatermelon accepted case-insensitively" "SmartWatermelon" "nightowlstudiollc/kebab-tax"
-
-if _gh_wrapper_logins_equal twistedmelonman smartwatermelon; then
-  echo "PASS: logins_equal accepts the alias"
-else
-  echo "FAIL: logins_equal rejects the alias"
-  fail=1
-fi
-if _gh_wrapper_logins_equal smartwatermelon twistedmelonman; then
-  echo "FAIL: logins_equal is not one-directional"
-  fail=1
-else
-  echo "PASS: logins_equal is one-directional"
-fi
-if _gh_wrapper_logins_equal twistedmelonman andrewmrich; then
-  echo "FAIL: logins_equal accepted an unrelated login"
-  fail=1
-else
-  echo "PASS: logins_equal rejects an unrelated login"
-fi
-
-# --- Alias resolves the SWITCH TARGET, not just the comparison ---------------
-# The window this pins: pre-rename, the keyring holds andrewmrich and
-# smartwatermelon but NOT twistedmelonman. A personal repo resolves
-# desired=twistedmelonman, so switching to `desired` verbatim asks gh for an
-# account it does not have and the wrapper hard-fails — on the very calls the
-# alias exists to keep working. The target must be resolved to a login the
-# keyring actually holds. Remove with the alias (org-migration Step 6).
-#
-# This case needs a STRICTER stub than the shared one above: the shared stub
-# always exits 0, which would let a switch to a non-existent account look like
-# success. This one fails unless the requested user is really held, which is
-# what `gh auth switch` does.
-# Redefined via eval for the same reason the shared stub above is: only the
-# `command` override reaches it, which the linter cannot trace.
-_test_switch_strict_users=""
-eval '_test_command_stub() {
-  if [[ "$1" == "gh" && "$2" == "auth" && "$3" == "switch" ]]; then
-    local requested="${*: -1}"
-    printf "%s" "${requested}" >"${switch_log}"
-    local held
-    for held in ${_test_switch_strict_users}; do
-      [[ "${held}" == "${requested}" ]] && return 0
-    done
-    return 1
-  fi
-  builtin command "$@"
-}'
-
-assert_switch_target() {
-  local label="$1" current_user="$2" held_users="$3" repo_arg="$4" expected="$5"
-  rm -f "${switch_log}"
-  _test_switch_strict_users="${held_users}"
-  {
-    echo "github.com:"
-    echo "    users:"
-    local u
-    for u in ${held_users}; do
-      echo "        ${u}:"
-    done
-    echo "    user: ${current_user}"
-  } >"${HOME}/.config/gh/hosts.yml"
-  if ! _gh_wrapper_sync_identity --repo "${repo_arg}" pr list 2>/dev/null; then
-    echo "FAIL: ${label} — sync returned non-zero (switch to a login the keyring lacks)"
-    fail=1
-    return
-  fi
-  local got
-  got="$(cat "${switch_log}" 2>/dev/null || true)"
-  if [[ "${got}" == "${expected}" ]]; then
-    echo "PASS: ${label} (switched to ${expected})"
-  else
-    echo "FAIL: ${label} — expected switch to '${expected}', got '${got}'"
-    fail=1
-  fi
-}
-
-# Keyring holds andrewmrich + smartwatermelon; twistedmelonman does not exist
-# yet. A personal-org repo must switch to the held alias, not to the
-# not-yet-existent desired login.
-assert_switch_target "alias resolves switch target to a held login" \
-  "andrewmrich" "andrewmrich smartwatermelon" "smartwatermelon/dotfiles" "smartwatermelon"
-
-# Post-rename shape: once twistedmelonman exists it is preferred over the alias.
-assert_switch_target "held desired login wins over its alias" \
-  "andrewmrich" "andrewmrich smartwatermelon twistedmelonman" "smartwatermelon/dotfiles" "twistedmelonman"
-
-# Restore the permissive shared stub for the cases that follow.
-eval '_test_command_stub() {
-  if [[ "$1" == "gh" && "$2" == "auth" && "$3" == "switch" ]]; then
-    printf "%s" "${*: -1}" >"${switch_log}"
-    return 0
-  fi
-  builtin command "$@"
-}'
+# Post-rename: the old login is just another wrong identity.
+assert_desired "stale smartwatermelon hosts.yml is switched" "smartwatermelon" "smartwatermelon/dotfiles" "twistedmelonman"
 
 # --- Tier 3: default ---------------------------------------------------------
 # An owner claimed by neither identity, with no Beacon context, defaults to

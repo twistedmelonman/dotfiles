@@ -79,14 +79,13 @@ else
   _fail "matching GH_TOKEN: should proceed"
 fi
 
-# Case 3b: GH_TOKEN still reporting the pre-rename login. Accepted through the
-# temporary alias (dev-env org-migration design, "Temporary login alias").
-# Delete this case together with the alias.
+# Case 3b: GH_TOKEN reporting the pre-rename login is a mismatch now that the
+# alias is gone.
 if _sync_under_env GH_TOKEN="fake-token-for-smartwatermelon" \
   CLAUDE_GH_TOKEN_LOGIN="smartwatermelon"; then
-  _pass "aliased GH_TOKEN (smartwatermelon): proceeds"
+  _fail "stale smartwatermelon GH_TOKEN: silently accepted"
 else
-  _fail "aliased GH_TOKEN (smartwatermelon): should proceed via alias"
+  _pass "stale smartwatermelon GH_TOKEN: fails closed"
 fi
 
 # Case 4: expired or revoked GH_TOKEN, with CLAUDE_GH_TOKEN_LOGIN unset so the

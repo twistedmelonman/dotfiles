@@ -179,31 +179,6 @@ _gh_wrapper_is_beacon_context() {
   return 1
 }
 
-# TEMPORARY until the 2026-09 rename lands (dev-env
-# docs/superpowers/specs/2026-09-03-org-migration-design.md, Step 2). Remove
-# in the Step 6 follow-up together with every test case that names it. Both
-# logins are the same person: the personal account is renamed from
-# smartwatermelon to twistedmelonman, and until that happens every token
-# still reports the old name. Format: desired=alias[,desired=alias...].
-_GH_WRAPPER_LOGIN_ALIASES="${_GH_WRAPPER_LOGIN_ALIASES:-twistedmelonman=smartwatermelon}"
-
-# True when `actual` is `desired` or one of desired's aliases, case-
-# insensitively. One-directional: an alias never stands in for its own
-# desired value as a `desired` argument.
-_gh_wrapper_logins_equal() {
-  local desired="${1,,}" actual="${2,,}"
-  [[ "${desired}" == "${actual}" ]] && return 0
-  local IFS=','
-  local pair
-  for pair in ${_GH_WRAPPER_LOGIN_ALIASES}; do
-    pair="${pair,,}"
-    if [[ "${pair%%=*}" == "${desired}" && "${pair#*=}" == "${actual}" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
 # The keyring login gh will use: the `user:` under `github.com:` in hosts.yml.
 # Empty when no host entry exists.
 _gh_wrapper_keyring_login() {
@@ -241,28 +216,24 @@ _gh_wrapper_keyring_users() {
 }
 
 # The login to hand `gh auth switch`. `desired` may not exist in the keyring
-# yet — during the rename window the account is still named by its alias — and
-# switching to an account gh does not have fails outright. Prefer `desired`
-# when held, else the first held login the alias table equates to it, else
-# `desired` unchanged so the caller still fails closed with its own message.
+# yet, and switching to an account gh does not have fails outright. Prefer the
+# keyring's own casing when a case-insensitive match is held, else `desired`
+# unchanged so the caller still fails closed with its own message.
 _gh_wrapper_resolve_switch_target() {
   local desired="$1"
   local held_logins
   held_logins="$(_gh_wrapper_keyring_users)" || held_logins=""
 
-  local held alias_match=""
+  local held
   while IFS= read -r held; do
     [[ -z "${held}" ]] && continue
     if [[ "${held,,}" == "${desired,,}" ]]; then
       printf '%s' "${held}"
       return 0
     fi
-    if [[ -z "${alias_match}" ]] && _gh_wrapper_logins_equal "${desired}" "${held}"; then
-      alias_match="${held}"
-    fi
   done <<<"${held_logins}"
 
-  printf '%s' "${alias_match:-${desired}}"
+  printf '%s' "${desired}"
 }
 
 # gh has one active account per host (not per repo), unlike git+SSH which
@@ -363,7 +334,7 @@ _gh_wrapper_sync_identity() {
       return 1
     fi
 
-    if ! _gh_wrapper_logins_equal "${desired}" "${token_login}"; then
+    if [[ "${token_login,,}" != "${desired,,}" ]]; then
       echo "[gh] ERROR: GH_TOKEN authenticates as '${token_login}' but repo owner '${owner}' requires '${desired}'" >&2
       echo "[gh] GH_TOKEN takes precedence over 'gh auth switch', so this would" >&2
       echo "[gh] run as the wrong identity. Failing closed." >&2
@@ -374,7 +345,7 @@ _gh_wrapper_sync_identity() {
 
   current="$(_gh_wrapper_keyring_login)"
 
-  if [[ -n "${current}" ]] && ! _gh_wrapper_logins_equal "${desired}" "${current}"; then
+  if [[ -n "${current}" && "${current,,}" != "${desired,,}" ]]; then
     # Not `desired` verbatim: during the rename window the keyring still holds
     # the pre-rename login, and `gh auth switch` to an account it does not have
     # fails. Resolve to a login gh actually holds.
@@ -936,6 +907,6 @@ else
   # its own body into subshells, not functions it calls. Without exporting
   # these too, gh() would break in any subshell that inherits the exported
   # gh but didn't source this file (e.g. BASH_ENV unset/overridden there).
-  export -f gh sugh _gh_wrapper_block_bypass _gh_wrapper_maybe_review _gh_wrapper_review_script_path _gh_wrapper_sync_identity _gh_wrapper_find_real_gh _gh_wrapper_resolve_owner _gh_wrapper_force_draft_for_off_org _gh_wrapper_is_beacon_context _gh_wrapper_beacon_dir_is_explicit _gh_wrapper_logins_equal _gh_wrapper_keyring_login _gh_wrapper_keyring_users _gh_wrapper_resolve_switch_target _gh_wrapper_run_with_scope_hint _gh_wrapper_scope_from_file _gh_wrapper_print_scope_hint _gh_wrapper_redact_argv _gh_wrapper_redact_value
-  export _gh_wrapper_review_script GH_WRAPPER_BEACON_DIR _GH_WRAPPER_BEACON_DIR_DEFAULT _GH_WRAPPER_LOGIN_ALIASES
+  export -f gh sugh _gh_wrapper_block_bypass _gh_wrapper_maybe_review _gh_wrapper_review_script_path _gh_wrapper_sync_identity _gh_wrapper_find_real_gh _gh_wrapper_resolve_owner _gh_wrapper_force_draft_for_off_org _gh_wrapper_is_beacon_context _gh_wrapper_beacon_dir_is_explicit _gh_wrapper_keyring_login _gh_wrapper_keyring_users _gh_wrapper_resolve_switch_target _gh_wrapper_run_with_scope_hint _gh_wrapper_scope_from_file _gh_wrapper_print_scope_hint _gh_wrapper_redact_argv _gh_wrapper_redact_value
+  export _gh_wrapper_review_script GH_WRAPPER_BEACON_DIR _GH_WRAPPER_BEACON_DIR_DEFAULT
 fi
