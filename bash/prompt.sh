@@ -6,7 +6,10 @@
 if [[ -f /opt/homebrew/share/liquidprompt ]]; then
   # Source liquidprompt
   # Configuration is loaded from ~/.config/liquidpromptrc
-  # shellcheck source=/opt/homebrew/share/liquidprompt
+  # Not source=/opt/homebrew/share/liquidprompt: that path exists only on a
+  # Homebrew Mac, so shellcheck resolves it here and fails on the Linux CI
+  # runner, where the file is absent.
+  # shellcheck source=/dev/null
   source /opt/homebrew/share/liquidprompt
 else
   # Fallback to simple prompt if liquidprompt not installed

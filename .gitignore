@@ -33,6 +33,10 @@ gh/*
 # Declares this repo's shell style so lint-shell.sh formats from a stated
 # preference rather than a hook default (smartwatermelon/dotfiles#290).
 !.editorconfig
+# Repo-root shellcheck config for CI: resolves sourced files so standards-check
+# does not fail on info-level SC1091. Distinct from shellcheck/.shellcheckrc,
+# which is deployed to ~/.shellcheckrc for interactive use.
+!.shellcheckrc
 !README.md
 !liquidpromptrc
 !install.sh

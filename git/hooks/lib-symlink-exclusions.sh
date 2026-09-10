@@ -71,6 +71,11 @@ _symlink_is_excluded() {
     # Other repo-level files that may be added
     Makefile) return 0 ;;
     .editorconfig) return 0 ;;
+    # Repo-root shellcheck config, read by CI from the repo root. It must NOT
+    # reach ~/.config: ~/.shellcheckrc is the stricter interactive config
+    # deployed from shellcheck/.shellcheckrc, and symlinking this one would
+    # shadow it.
+    .shellcheckrc) return 0 ;;
     .gitattributes) return 0 ;;
     CONTRIBUTING.md) return 0 ;;
     CHANGELOG*) return 0 ;;

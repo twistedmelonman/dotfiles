@@ -1,0 +1,15 @@
+# https://github.com/koalaman/shellcheck/wiki/Directive#shellcheckrc-file
+#
+# Repo-root config for CI. standards-check runs `shellcheck -S info` from the
+# repo root, where info-level SC1091 ("not following sourced file") is a
+# failure. These two settings resolve the sourced files instead of silencing
+# the finding, so the sourced code is analyzed rather than skipped.
+#
+# source-path=SCRIPTDIR resolves sources written against the *deployed* layout
+# (${BASH_CONFIG_DIR}/foo.sh -> ~/.config/bash/foo.sh) back to the repo layout,
+# where those files sit beside the sourcing script in bash/.
+#
+# This does not replace shellcheck/.shellcheckrc, which is the stricter config
+# deployed to ~/.shellcheckrc for interactive use.
+external-sources=true
+source-path=SCRIPTDIR
