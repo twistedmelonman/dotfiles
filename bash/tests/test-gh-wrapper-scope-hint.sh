@@ -360,6 +360,24 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
   fi
   sleep 0.25
 done
+# Also wait for the stub to have started, not just the wrapper. The errfile
+# above is created by the WRAPPER; the pidfile is written by the stub as its
+# first action. Signalling on the errfile alone can therefore land in the
+# window after the wrapper has started but before it reaches gh — the stub
+# never runs, no pid is ever recorded, and the forward assertion below has
+# nothing to measure. That window widens under load, which is why the failure
+# was intermittent and load-dependent (dotfiles#319).
+#
+# Waiting on the pidfile makes the signal land at a defined point in the
+# wrapper's progress instead of a time-based guess.
+saw_stub=0
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  if [[ -s "${OM_SLEEPER_PIDFILE}" ]]; then
+    saw_stub=1
+    break
+  fi
+  sleep 0.25
+done
 kill -TERM "${sleeper_pid}" 2>/dev/null
 # Bounded: a plain `wait` here passes for the wrong reason. bash defers a
 # trapped signal while a FOREGROUND command runs, so a wrapper that runs gh in
@@ -394,12 +412,19 @@ if [[ "${leak_after}" == "0" ]]; then
 else
   _fail "SIGTERM leak: ${leak_after} temp file(s) left behind after SIGTERM"
 fi
+# Three outcomes, reported separately. "The stub never started" is a failure
+# to OBSERVE, not a wrapper defect, and folding it into the orphan branch is
+# what made dotfiles#319 read as a wrapper bug: every observed failure was the
+# empty-pid case, and the assertion had never once caught a surviving process.
+# A test that cannot run should say so rather than accuse the code under test.
 gh_pid="$(cat "${OM_SLEEPER_PIDFILE}" 2>/dev/null)"
-if [[ -n "${gh_pid}" ]] && ! kill -0 "${gh_pid}" 2>/dev/null; then
-  _pass "SIGTERM forward: gh did not survive the wrapper as an orphan"
-else
-  _fail "SIGTERM forward: gh (pid ${gh_pid:-unknown}) still running after the wrapper died"
+if [[ "${saw_stub}" != "1" || -z "${gh_pid}" ]]; then
+  _fail "SIGTERM forward: stub never started — assertion could not run"
+elif kill -0 "${gh_pid}" 2>/dev/null; then
+  _fail "SIGTERM forward: gh (pid ${gh_pid}) survived the wrapper as an orphan"
   kill -TERM "${gh_pid}" 2>/dev/null
+else
+  _pass "SIGTERM forward: gh did not survive the wrapper as an orphan"
 fi
 
 if [[ ${fail} -eq 0 ]]; then
