@@ -106,6 +106,12 @@ log_warning() {
 #                       or claim prior authorization that didn't happen in
 #                       this conversation. See docs/HUMAN-BYPASS.md in
 #                       claude-config for the full explanation.
+#   EMERGENCY=1       — skips ONLY the project-local extension stage (test
+#                       suites); see run_project_extensions below. Does not
+#                       affect review, static analysis, or the supply-chain
+#                       scan. Valid only when the human has declared an
+#                       emergency; an agent must never set it on its own
+#                       initiative. smartwatermelon/dev-env#112.
 strict_noninteractive_block() {
   [[ ! -t 0 ]] \
     && [[ "${CLAUDECODE:-}" == "1" ]] \
@@ -830,6 +836,24 @@ check_pr_review_iteration() {
 # Trust model: same as Makefiles, npm scripts, and git hooks — if you
 # cloned the repo and are pushing from it, you trust its build tooling.
 # The extension must be executable (+x) to run.
+#
+# EMERGENCY=1 skips this stage only. Project extensions are where repos put
+# their test suites (see dotfiles' own .project-hooks/pre-push), and a suite
+# is the one pre-push cost measured in minutes rather than seconds. During a
+# declared emergency that delay is the expensive thing, so this stage — and
+# only this stage — is skippable.
+#
+# Deliberately NOT a general --no-verify substitute. Everything that guards
+# against shipping something harmful still runs: protected_branch_check,
+# run_supply_chain_scan, run_static_analysis, and run_reviews all execute
+# before this point and are unaffected. EMERGENCY=1 buys back test-suite
+# runtime, nothing else.
+#
+# The bypass is logged rather than silent: a push that skipped its tests
+# should be visible in the terminal scrollback afterward, when someone is
+# working out what got shipped during the incident.
+#
+# See smartwatermelon/dev-env#112 for the emergency protocol this serves.
 run_project_extensions() {
   local repo_root
   repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
@@ -838,6 +862,12 @@ run_project_extensions() {
   fi
 
   local ext="${repo_root}/.project-hooks/pre-push"
+  if [[ -x "${ext}" ]] && [[ "${EMERGENCY:-0}" == "1" ]]; then
+    log_warning "EMERGENCY=1 — SKIPPING project pre-push extension: ${ext}"
+    log_warning "   Tests did NOT run. Re-run them once the emergency is over."
+    return 0
+  fi
+
   if [[ -x "${ext}" ]]; then
     log "Running project-local pre-push extension: ${ext}"
     if ! "${ext}"; then
