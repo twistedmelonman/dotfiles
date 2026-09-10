@@ -967,6 +967,58 @@ cdroot() {
 }
 # Not exported - interactive command only
 
+# Run a command; send all output (stdout+stderr) to the terminal and the clipboard
+# Usage: pbrun <command> [args...]
+# Streams output live when attached to a terminal; buffers otherwise. Returns
+# the command's own exit status, not the pipeline's.
+pbrun() {
+  if [[ $# -eq 0 ]]; then
+    echo "Usage: pbrun <command> [args...]" >&2
+    return 1
+  fi
+
+  if ! command -v pbcopy &>/dev/null; then
+    echo "pbcopy not found - pbrun requires macOS or a pbcopy shim" >&2
+    return 1
+  fi
+
+  # A tty lets us stream: tee writes to the terminal while pbcopy consumes the
+  # pipe, so pbcopy finishes before the pipeline returns and cannot race a
+  # following pbpaste.
+  #
+  # `-t 1` alone is not enough: a process detached from its controlling
+  # terminal (setsid, some daemons) can have a tty on stdout while /dev/tty
+  # fails to open. `-w /dev/tty` does not cover that either -- it reports the
+  # permission bits, which stay writable on a device that will not open, so it
+  # returns true while `tee` dies with "Device not configured". Only an actual
+  # open proves the redirect will work.
+  if [[ -t 1 ]] && (: >/dev/tty) 2>/dev/null; then
+    "$@" 2>&1 | tee /dev/tty | pbcopy
+    return "${PIPESTATUS[0]}"
+  fi
+
+  # No terminal to stream to (piped, cron, script): buffer, then emit.
+  #
+  # Buffering through a file rather than $(...) keeps the two branches
+  # byte-identical. Command substitution strips every trailing newline, so
+  # re-adding exactly one with printf would make `pbrun printf 'a\n\n\n'` copy
+  # one newline here and three when streaming, and would copy a lone newline
+  # for a command that printed nothing. It also drops NUL bytes. For a
+  # clipboard helper the exact bytes are the product, so preserve them.
+  # The trap makes cleanup unconditional rather than dependent on reaching the
+  # last line: an interrupt, a SIGPIPE from a closed downstream reader, or a
+  # caller running under `set -e` can all leave the function early.
+  local tmp rc
+  tmp=$(mktemp) || return 1
+  trap 'rm -f "${tmp}"' RETURN
+  "$@" >"${tmp}" 2>&1
+  rc=$?
+  cat "${tmp}"
+  pbcopy <"${tmp}"
+  return "${rc}"
+}
+# Not exported - interactive command only
+
 # Create and cd into a dated directory
 mkdate() {
   local dir="${1:-$(date +%Y-%m-%d)}"
