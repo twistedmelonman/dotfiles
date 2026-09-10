@@ -124,14 +124,6 @@ echo "🔧 Initializing Claude Code infrastructure..."
 # Copy template structure
 cp -r "${CLAUDE_TEMPLATE}" ".claude"
 
-# Ensure extensions directory exists
-mkdir -p ".claude/hooks/extensions"
-
-# Make example extension non-executable (disabled by default)
-if [[ -f ".claude/hooks/extensions/example.sh.disabled" ]]; then
-  chmod -x ".claude/hooks/extensions/example.sh.disabled"
-fi
-
 # Record the tracking policy for the scaffold we just created.
 #
 # The scaffold is generated content this hook can reproduce on demand, and
@@ -257,7 +249,7 @@ echo ""
 echo "Next steps:"
 echo "  1. Review .claude/README.md for project-specific setup"
 echo "  2. Edit .claude/config.sh with project settings (if needed)"
-echo "  3. Add custom extensions in .claude/hooks/extensions/ (if needed)"
+echo "  3. Add custom checks in .project-hooks/pre-commit or pre-push (if needed)"
 echo ""
 echo "Documentation: ~/.claude/docs/INFRASTRUCTURE.md"
 

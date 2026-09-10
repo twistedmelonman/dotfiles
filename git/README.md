@@ -178,7 +178,7 @@ and check whether any reported findings' line ranges overlap your diff.
 
 1. Exits unless git reports a branch checkout (`$3 == 1`)
 2. Exits if `.claude/` already exists
-3. Copies `template/.claude-template/` to `.claude/`, creates `hooks/extensions/`, disables the example extension
+3. Copies `template/.claude-template/` to `.claude/`
 4. Records `.claude/` as ignored, subject to the guards below
 
 **Why ignore by default**: the scaffold is generated content the hook can reproduce on demand, and the other common inhabitant of `.claude/` (`settings.local.json`) is machine-local by Claude Code's own `.local.` naming convention. Without a recorded decision, each repo's `.claude/` ended up tracked or ignored by whoever touched it next — a survey of 27 repos found 14 tracking it, 12 ignoring it, and 1 doing neither, all holding byte-identical content (smartwatermelon/dotfiles#220).
