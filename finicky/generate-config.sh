@@ -81,6 +81,48 @@ finicky_scan_pwas() {
   done | LC_ALL=C sort
 }
 
+# finicky_catalog_ids <template_path>
+# Emits the app ids keyed in the template's CATALOG block, one per line.
+# Chrome app ids are exactly 32 characters from a-p, which is strict enough to
+# skip commented-out entries and the block's own punctuation. Prints nothing
+# when the template has no CATALOG block.
+finicky_catalog_ids() {
+  local template="$1"
+  [[ -f "${template}" ]] || return 0
+  awk '
+    /^const CATALOG = \{/ { inblock = 1; next }
+    inblock && /^\};/     { inblock = 0 }
+    inblock && match($0, /[a-p]{32}/) {
+      # Re-anchor: only a bare or quoted key at the start of the line counts,
+      # so a commented-out entry and any id inside a hostname are skipped.
+      if ($0 ~ /^[[:space:]]*"?[a-p]{32}"?:/) {
+        print substr($0, RSTART, RLENGTH)
+      }
+    }
+  ' "${template}"
+}
+
+# finicky_check_catalog <template_path> <scan_lines>
+# Warns for every CATALOG entry with no matching installed PWA. Such an entry
+# is dropped by the template's filter, so its hostnames quietly fall through
+# to defaultBrowser instead of opening the app — a failure with no other
+# diagnostic. Prints a count summary when the template has a CATALOG block.
+finicky_check_catalog() {
+  local template="$1" scan="$2" ids id total=0 active=0
+  ids="$(finicky_catalog_ids "${template}")"
+  [[ -n "${ids}" ]] || return 0
+  while IFS= read -r id; do
+    [[ -n "${id}" ]] || continue
+    ((total += 1))
+    if [[ -n "${scan}" ]] && grep -q "^${id}	" <<<"${scan}"; then
+      ((active += 1))
+    else
+      _gen_warn "CATALOG entry ${id} has no installed PWA; its hostnames fall through to defaultBrowser"
+    fi
+  done <<<"${ids}"
+  _gen_info "CATALOG entries: ${total}, active handlers: ${active}"
+}
+
 # Escapes a value for use inside a double-quoted JSON string.
 _json_escape() {
   local s="$1"
@@ -213,6 +255,9 @@ main() {
 
   local scan rendered
   scan="$(finicky_scan_pwas "${apps_dir}" "${profile_root}")"
+  # Before rendering, so an orphaned CATALOG entry is reported on --dry-run
+  # and on the unchanged-config early return as well as on a real install.
+  finicky_check_catalog "${template}" "${scan}"
   rendered="$(mktemp "${TMPDIR:-/tmp}/finicky-render.XXXXXX")"
   if ! finicky_render "${template}" "${scan}" >"${rendered}"; then
     rm -f "${rendered}"
