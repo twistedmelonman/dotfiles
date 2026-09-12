@@ -146,6 +146,67 @@ else
   _pass "expired GH_TOKEN: does not echo the raw API error body"
 fi
 
+# Case 5: a PATH entry answers as `gh` but is not gh — it exits 0 and prints
+# something that is not a login. The token is healthy here; the diagnostic must
+# say so and name the binary it resolved, instead of sending the reader off to
+# rotate a working token. This is the shape a bats suite that stubs `gh` on PATH
+# produces (smartwatermelon/scripts#177): the wrapper's own PATH scan finds the
+# stub, and the stub answers every invocation with its fixture.
+#
+# KNOWN-BAD CASE: against the pre-fix code all three assertions below fail --
+# the message said "expired or revoked", named no path, and offered no hint that
+# PATH was the problem.
+SHADOW_DIR="${WORKDIR}/shadow-bin"
+mkdir -p "${SHADOW_DIR}"
+cat >"${SHADOW_DIR}/gh" <<'STUB_EOF'
+#!/usr/bin/env bash
+# A JSON array, as a PR-listing fixture would return: valid output for whatever
+# this stub was written to serve, but not a login name. Exits 0 -- that is the
+# point, since a non-zero exit is the already-handled expired-token path.
+echo '[]'
+exit 0
+STUB_EOF
+chmod +x "${SHADOW_DIR}/gh"
+
+err_output="$(_sync_under_env PATH="${SHADOW_DIR}:${PATH}" \
+  GH_TOKEN="healthy-token-fixture" 2>&1)"
+rc=$?
+
+if [[ ${rc} -ne 0 ]]; then
+  _pass "shadowed gh: fails closed"
+else
+  _fail "shadowed gh: should fail closed"
+fi
+
+if [[ "${err_output}" == *"something on PATH is answering"* ]]; then
+  _pass "shadowed gh: blames PATH, not the token"
+else
+  _fail "shadowed gh: should blame PATH, got: ${err_output}"
+fi
+
+if [[ "${err_output}" == *"${SHADOW_DIR}/gh"* ]]; then
+  _pass "shadowed gh: names the resolved binary"
+else
+  _fail "shadowed gh: should name the resolved binary, got: ${err_output}"
+fi
+
+# The inverse of Case 4's rotate-the-token advice: offering it here would point
+# at a token that is working fine.
+if [[ "${err_output}" == *"expired or revoked"* ]]; then
+  _fail "shadowed gh: wrongly advised rotating a healthy token"
+else
+  _pass "shadowed gh: does not advise rotating a healthy token"
+fi
+
+# Symmetry check on Case 4: a genuinely expired token must still get the rotate
+# advice, so the new branch cannot swallow the path it was split away from.
+if [[ "$(_sync_under_env PATH="${STUB_DIR}:${PATH}" \
+  GH_TOKEN="expired-token-fixture" 2>&1)" == *"expired or revoked"* ]]; then
+  _pass "expired GH_TOKEN: still gets rotate-the-token advice"
+else
+  _fail "expired GH_TOKEN: lost its rotate-the-token advice"
+fi
+
 if [[ ${fail} -eq 0 ]]; then
   echo "test-gh-wrapper-gh-token-precedence.sh: all assertions passed"
   exit 0

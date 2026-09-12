@@ -296,6 +296,12 @@ _gh_wrapper_sync_identity() {
   # built here.
   if [[ -n "${GH_TOKEN:-}" ]]; then
     local token_login="${CLAUDE_GH_TOKEN_LOGIN:-}"
+    # Why resolution failed, so the advice below can match the actual cause
+    # instead of guessing "expired". Three paths reach the same dead end and
+    # they need different fixes: no real gh on PATH, the API call failing
+    # (expired/revoked), and the call succeeding with output that is not a
+    # login (something on PATH answered as gh but is not gh).
+    local unresolved_reason="api_failed"
 
     if [[ -z "${token_login}" ]]; then
       # NOT `command gh`: ~/.local/bin/gh is this same wrapper and precedes
@@ -311,7 +317,11 @@ _gh_wrapper_sync_identity() {
         local api_out
         if api_out="$(GH_TOKEN="${GH_TOKEN}" "${real_gh}" api user --jq .login 2>/dev/null)"; then
           token_login="${api_out}"
+        else
+          unresolved_reason="api_failed"
         fi
+      else
+        unresolved_reason="no_real_gh"
       fi
     fi
 
@@ -321,16 +331,43 @@ _gh_wrapper_sync_identity() {
     # named an identity.
     if [[ -n "${token_login}" && ! "${token_login}" =~ ^[A-Za-z0-9-]+$ ]]; then
       token_login=""
+      # The call SUCCEEDED and returned something that is not a login, so the
+      # token is not the suspect — whatever answered as `gh` is. A test suite
+      # that stubs `gh` on PATH hits this, because the PATH scan below finds
+      # the stub (smartwatermelon/scripts#177).
+      unresolved_reason="bad_output"
     fi
 
     if [[ -z "${token_login}" ]]; then
       echo "[gh] ERROR: GH_TOKEN is set but its identity could not be resolved" >&2
       echo "[gh] Refusing to run: GH_TOKEN overrides 'gh auth switch', so the" >&2
       echo "[gh] identity check cannot be trusted." >&2
-      echo "[gh] Most likely the token is expired or revoked. Check with:" >&2
-      echo "[gh]   gh api -i user | grep -i token-expiration" >&2
-      echo "[gh] Fix: rotate the token, or unset GH_TOKEN to use the keyring" >&2
-      echo "[gh] identity." >&2
+
+      # Never echo the captured output itself. A shadowing binary can print
+      # anything, including a credential, and this goes to stderr in every
+      # session; the resolved path is what identifies the culprit anyway.
+      case "${unresolved_reason}" in
+        bad_output)
+          echo "[gh] The identity lookup SUCCEEDED but did not return a login name," >&2
+          echo "[gh] so the token is probably fine — something on PATH is answering" >&2
+          echo "[gh] as 'gh' but is not gh. Resolved to:" >&2
+          echo "[gh]   ${real_gh:-<unknown>}" >&2
+          echo "[gh] Fix: remove that entry from PATH. If it is a test stub, unset" >&2
+          echo "[gh] GH_TOKEN for the test so this check is skipped." >&2
+          echo "[gh] Inspect with: type -a gh" >&2
+          ;;
+        no_real_gh)
+          echo "[gh] No real 'gh' binary was found in PATH (see the error above)," >&2
+          echo "[gh] so the identity could not be checked at all." >&2
+          echo "[gh] Fix: install gh, or repair PATH. Inspect with: type -a gh" >&2
+          ;;
+        *)
+          echo "[gh] Most likely the token is expired or revoked. Check with:" >&2
+          echo "[gh]   gh api -i user | grep -i token-expiration" >&2
+          echo "[gh] Fix: rotate the token, or unset GH_TOKEN to use the keyring" >&2
+          echo "[gh] identity." >&2
+          ;;
+      esac
       return 1
     fi
 
