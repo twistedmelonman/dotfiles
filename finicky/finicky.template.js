@@ -37,6 +37,14 @@
 
 // Hand-curated: app ID → hostnames to route there. Add an entry per PWA you
 // install anywhere; the generator activates only the ones present locally.
+// An entry whose app is not installed is dropped, and the generator warns —
+// that is the only signal, since Finicky logs nothing when no handler matches.
+//
+// One app ID maps to one Chrome profile. `_profile_for_app` prefers Default
+// and returns the first match otherwise, so the same PWA installed in two
+// profiles is not representable here: one profile wins and the other is
+// unreachable through Finicky. Routing the same app per profile would need a
+// CATALOG keyed on (appId, profile) and a Finicky handler per pair.
 const CATALOG = {
   mjoklplbddabcmpepnokjaffbmgbkkgg: {
     hostnames: ["github.com", "www.github.com"],

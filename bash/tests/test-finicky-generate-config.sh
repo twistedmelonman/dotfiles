@@ -150,6 +150,61 @@ else
   echo "  SKIP: node not on PATH, syntax check not run"
 fi
 
+echo "catalog:"
+# A CATALOG entry whose app is not installed loses its handler silently: the
+# template's filter drops it and links fall through to a plain browser tab
+# with no diagnostic anywhere. The generator warns instead.
+check "real template has exactly one CATALOG block" "1" "$(grep -c '^const CATALOG = {' "${REAL_TEMPLATE}")"
+check "catalog ids on real template lists only GitHub" "${GH_ID}" "$(finicky_catalog_ids "${REAL_TEMPLATE}")"
+
+CAT_TEMPLATE="${TMP}/catalog.template.js"
+PHANTOM_ID="cccccccccccccccccccccccccccccccc"
+COMMENTED_ID="dddddddddddddddddddddddddddddddd"
+cat >"${CAT_TEMPLATE}" <<EOF
+// header
+const CATALOG = {
+  ${GH_ID}: { hostnames: ["github.com"] },
+  ${PHANTOM_ID}: { hostnames: ["phantom.example"] },
+  // ${COMMENTED_ID}: { hostnames: ["retired.example"] },
+};
+const INSTALLED_PWAS = {}; // @@INSTALLED_PWAS@@
+export default { defaultBrowser: "Google Chrome", handlers: [] };
+EOF
+check "catalog ids skips commented-out entries" "$(printf '%s\n%s' "${GH_ID}" "${PHANTOM_ID}")" "$(finicky_catalog_ids "${CAT_TEMPLATE}")"
+
+run_catalog_gen() {
+  FINICKY_TEMPLATE="${CAT_TEMPLATE}" FINICKY_OUTPUT="${TMP}/catalog-out.js" \
+    CHROME_APPS_DIR="${APPS}" CHROME_PROFILE_ROOT="${PROFILES}" \
+    FINICKY_RESTART_CMD="true" \
+    bash "${GEN}" "$@"
+}
+run_catalog_gen >"${TMP}/cat1.out" 2>&1 || {
+  echo "  FAIL: catalog run exited non-zero"
+  cat "${TMP}/cat1.out"
+  fail=1
+}
+check "warns about the uninstalled CATALOG entry" "1" "$(grep -c "CATALOG entry ${PHANTOM_ID} has no installed PWA" "${TMP}/cat1.out")"
+check "does not warn about the installed entry" "0" "$(grep -c "CATALOG entry ${GH_ID} has no installed" "${TMP}/cat1.out")"
+check "does not warn about the commented-out entry" "0" "$(grep -c "${COMMENTED_ID}" "${TMP}/cat1.out")"
+check "reports catalog entry and active handler counts" "1" "$(grep -c 'CATALOG entries: 2, active handlers: 1' "${TMP}/cat1.out")"
+
+run_catalog_gen --dry-run >"${TMP}/cat2.out" 2>&1 || {
+  echo "  FAIL: catalog dry-run exited non-zero"
+  fail=1
+}
+check "dry-run still warns about the uninstalled entry" "1" "$(grep -c "CATALOG entry ${PHANTOM_ID} has no installed PWA" "${TMP}/cat2.out")"
+
+echo "catalog: template without a CATALOG block:"
+# The other fixtures in this file have no CATALOG block at all. A missing
+# block must not be fatal — it only means there is nothing to cross-check.
+nocat_exit=0
+FINICKY_TEMPLATE="${TEMPLATE}" FINICKY_OUTPUT="${TMP}/nocat-out.js" \
+  CHROME_APPS_DIR="${APPS}" CHROME_PROFILE_ROOT="${PROFILES}" \
+  FINICKY_RESTART_CMD="true" \
+  bash "${GEN}" >"${TMP}/cat3.out" 2>&1 || nocat_exit=$?
+check "missing CATALOG block still exits 0" "0" "${nocat_exit}"
+check "missing CATALOG block still installs" "1" "$(grep -c 'installed:' "${TMP}/cat3.out")"
+
 echo "install:"
 OUT_DIR="${TMP}/out"
 mkdir -p "${OUT_DIR}"
