@@ -97,11 +97,30 @@ repos:
         verbose: true
 
   # HTML validation via tidy
+  #
+  # Fails only on tidy exit 2 (errors). Exit 1 means "warnings only", which
+  # tidyrc sets show-warnings:no to suppress -- failing on 1 rejected files
+  # while printing nothing to explain why. Exit codes are tidy's documented
+  # contract: 0 clean, 1 warnings, 2 errors.
+  #
+  # An unreadable or missing file exits 0 while printing "Document: ..." to
+  # stdout, so exit status alone would pass a file tidy never parsed. That
+  # output is treated as a failure too.
+  #
+  # Checked per file so one file's status cannot mask another's.
   - repo: local
     hooks:
       - id: html-tidy
         name: "HTML Validation (tidy)"
-        entry: bash -c 'tidy -q -e -config "$HOME/.config/tidy/tidyrc" "$@"' --
+        entry: >-
+          bash -c 'rc=0; for f in "$@"; do
+          out=$(tidy -q -e -config "$HOME/.config/tidy/tidyrc" "$f" 2>&1);
+          status=$?;
+          if [ "$status" -ge 2 ]; then
+          printf "tidy: errors in %s\n%s\n" "$f" "$out"; rc=1;
+          elif printf "%s" "$out" | grep -q "^Document:"; then
+          printf "tidy: could not read %s\n%s\n" "$f" "$out"; rc=1; fi;
+          done; exit "$rc"' --
         language: system
         types: [html]
         pass_filenames: true
