@@ -48,3 +48,4 @@ alias suclauded="suclaude --dangerously-skip-permissions"
 alias markdownlint='markdownlint --config ${HOME}/.markdownlint.json'
 alias npx-markdownlint='npx markdownlint --config ${HOME}/.markdownlint.json'
 alias diskspace='df -h /System/Volumes/Data'
+alias dotall='dotfiles && dotclaude'
