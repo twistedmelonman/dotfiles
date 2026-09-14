@@ -925,6 +925,13 @@ dotfiles() {
 }
 # Not exported
 
+# Reinstall claude-config
+dotclaude() {
+  "${HOME}/Developer/claude-config/install.sh" --sync || return $?
+  source "${HOME}/.bash_profile"
+}
+# Not exported
+
 # Extract compressed files (handles multiple formats)
 extract() {
   if [[ -f "$1" ]]; then
