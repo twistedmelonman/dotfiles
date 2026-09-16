@@ -69,10 +69,6 @@ if command -v brew &>/dev/null; then
   fi
 fi
 
-# iTerm2 completion
-#shellcheck source=/dev/null
-test -e "${HOME}/.iterm2/.iterm2_shell_integration.bash" && source "${HOME}/.iterm2/.iterm2_shell_integration.bash"
-
 # pipx completion
 if command -v register-python-argcomplete &>/dev/null; then
   eval "$(register-python-argcomplete pipx)"
