@@ -1,7 +1,13 @@
 # This is Git's per-user configuration file.
 # https://blog.gitbutler.com/how-git-core-devs-configure-git/
 [user]
-	email = 676392+smartwatermelon@users.noreply.github.com
+	# Account id 676392 is the personal account, renamed smartwatermelon ->
+	# twistedmelonman in the 2026-09 org migration. GitHub resolves the noreply
+	# address by id, so the old slug still attributed correctly — but
+	# "smartwatermelon" is now a different entity (the org, id 325018381), so
+	# the old form asserted something false. Keep this in sync with the account
+	# name, not the org.
+	email = 676392+twistedmelonman@users.noreply.github.com
 	name = Andrew Rich
 [column]
 	ui = auto
