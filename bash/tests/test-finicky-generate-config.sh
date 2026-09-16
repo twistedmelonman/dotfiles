@@ -150,6 +150,50 @@ else
   echo "  SKIP: node not on PATH, syntax check not run"
 fi
 
+echo "catalog profile pin:"
+# The CATALOG may pin `profile` for an app installed in several Chrome
+# profiles. The pin must win over the profile the scan chose, and the launch
+# URL must survive. Evaluating the rendered handler is the only way to see
+# this: `node --check` above parses the file but never runs it.
+if command -v node >/dev/null 2>&1; then
+  # Scan says "Profile 8"; the real template pins GitHub to "Default".
+  pinned_scan="$(printf '%s\tGitHub\tProfile 8' "${GH_ID}")"
+  printf '%s\n' "$(finicky_render "${REAL_TEMPLATE}" "${pinned_scan}")" \
+    >"${TMP}/pinned.mjs"
+  cat >"${TMP}/pinned-probe.js" <<'PROBE'
+const fs = require("fs");
+const src = fs
+  .readFileSync(process.argv[2], "utf8")
+  .replace(/^export default/m, "globalThis.__cfg =");
+globalThis.finicky = { matchHostnames: (h) => h };
+eval(src);
+const out = globalThis.__cfg.handlers.map((h) =>
+  h.browser("https://github.com/foo"),
+);
+console.log(JSON.stringify(out));
+PROBE
+  pinned_out="$(node "${TMP}/pinned-probe.js" "${TMP}/pinned.mjs" 2>"${TMP}/pin.err" || true)"
+  check "pinned profile wins over the scanned profile" "1" \
+    "$(grep -cF '"profile":"Default"' <<<"${pinned_out}")"
+  check "pinned handler does not use the scanned profile" "0" \
+    "$(grep -cF '"profile":"Profile 8"' <<<"${pinned_out}")"
+  check "pinned handler preserves the launch URL" "1" \
+    "$(grep -cF 'app-launch-url-for-shortcuts-menu-item=https://github.com/foo' <<<"${pinned_out}")"
+
+  # With no pin, the scanned profile is still what gets used.
+  unpinned_template="${TMP}/unpinned.template.js"
+  sed '/^    profile: "Default",$/d' "${REAL_TEMPLATE}" >"${unpinned_template}"
+  check "fixture template has the pin removed" "0" \
+    "$(grep -c '^    profile: "Default",$' "${unpinned_template}")"
+  printf '%s\n' "$(finicky_render "${unpinned_template}" "${pinned_scan}")" \
+    >"${TMP}/unpinned.mjs"
+  unpinned_out="$(node "${TMP}/pinned-probe.js" "${TMP}/unpinned.mjs" 2>>"${TMP}/pin.err" || true)"
+  check "without a pin the scanned profile is used" "1" \
+    "$(grep -cF '"profile":"Profile 8"' <<<"${unpinned_out}")"
+else
+  echo "  SKIP: node not on PATH, profile pin test not run"
+fi
+
 echo "catalog:"
 # A CATALOG entry whose app is not installed loses its handler silently: the
 # template's filter drops it and links fall through to a plain browser tab

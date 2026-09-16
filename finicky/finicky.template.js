@@ -40,14 +40,13 @@
 // An entry whose app is not installed is dropped, and the generator warns —
 // that is the only signal, since Finicky logs nothing when no handler matches.
 //
-// One app ID maps to one Chrome profile. `_profile_for_app` prefers Default
-// and returns the first match otherwise, so the same PWA installed in two
-// profiles is not representable here: one profile wins and the other is
-// unreachable through Finicky. Routing the same app per profile would need a
-// CATALOG keyed on (appId, profile) and a Finicky handler per pair.
+// The generated scan chooses a profile for each installed app. A catalog entry
+// can pin `profile` when the same app ID is intentionally installed in more
+// than one Chrome profile.
 const CATALOG = {
   mjoklplbddabcmpepnokjaffbmgbkkgg: {
     hostnames: ["github.com", "www.github.com"],
+    profile: "Default",
   },
 };
 
@@ -73,7 +72,10 @@ const handlers = Object.keys(CATALOG)
   )
   .map((appId) => ({
     match: finicky.matchHostnames(CATALOG[appId].hostnames),
-    browser: chromeApp(appId, INSTALLED_PWAS[appId].profile),
+    browser: chromeApp(
+      appId,
+      CATALOG[appId].profile || INSTALLED_PWAS[appId].profile,
+    ),
   }));
 
 export default {
