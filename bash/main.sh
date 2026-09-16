@@ -62,6 +62,15 @@ if command -v direnv &>/dev/null; then
   eval "$(direnv hook bash)"
 fi
 
+# iTerm2 shell integration (must load last: it appends itself to
+# PROMPT_COMMAND and installs a DEBUG trap, and its own notes ask to be the
+# last pre-existing PROMPT_COMMAND entry). It self-guards on $- and TERM, so
+# no interactive test is needed here. iTerm2's installer writes this file to
+# ${HOME} — NOT to ${HOME}/.iterm2/, which holds only the imgcat/it2* tools.
+#shellcheck source=/dev/null
+test -e "${HOME}/.iterm2_shell_integration.bash" \
+  && source "${HOME}/.iterm2_shell_integration.bash"
+
 # End of custom configuration
 
 # Print startup message (comment out if not desired)
