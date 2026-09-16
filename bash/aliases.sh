@@ -37,7 +37,7 @@ if [[ -f "${HOME}/.local/bin/claude-wrapper" ]]; then
   alias claude='${HOME}/.local/bin/claude-wrapper'
   alias clauded="claude --dangerously-skip-permissions"
 else
-  alias claude='${HOME}/.local/bin/claude'
+  alias claude='/usr/bin/caffeinate -i ${HOME}/.local/bin/claude'
   alias clauded="claude --dangerously-skip-permissions"
 fi
 alias suclaude='${HOME}/.local/bin/claude'
