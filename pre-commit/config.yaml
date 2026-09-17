@@ -186,6 +186,14 @@ repos:
   # smartwatermelon/dev-env#19. Requires `brew install zizmor` once locally
   # (language: system expects the binary already on PATH).
   #
+  # Routed through lint-zizmor.sh rather than the bare binary: the wrapper
+  # resolves the config the way CI does (repo-root zizmor.yml, else the
+  # canonical fleet policy at ~/.config/zizmor/zizmor.yml) and passes CI's
+  # --min-severity/--no-online-audits. The bare entry passed no --config, so
+  # a repo without its own zizmor.yml got zizmor's blanket hash-pin default
+  # and rejected first-party reusable-workflow refs the fleet policy allows.
+  # See twistedmelonman/claude-config#531.
+  #
   # zizmor lints the whole file, not just your staged diff — so pre-existing
   # findings elsewhere in a workflow file can block a commit even when your
   # actual change is a one-line, unrelated edit. In repos with strict
@@ -199,7 +207,7 @@ repos:
     hooks:
       - id: zizmor
         name: "GitHub Actions Security Lint (zizmor)"
-        entry: zizmor
+        entry: bash -c '$HOME/.config/git/hooks/lint-zizmor.sh "$@"' --
         language: system
         files: ^\.github/workflows/.*\.ya?ml$
         pass_filenames: true

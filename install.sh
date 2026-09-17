@@ -198,7 +198,7 @@ source "${REPO_DIR}/git/hooks/lib-symlink-exclusions.sh"
 
 # Known config directories that should be symlinked into ~/.config.
 # Any top-level path not in this list AND not excluded triggers a warning.
-_KNOWN_CONFIG_DIRS="bash btop dig finicky gh git liquidpromptrc markdownlint-cli pre-commit s shellcheck tidy vim yamllint yt-dlp"
+_KNOWN_CONFIG_DIRS="bash btop dig finicky gh git liquidpromptrc markdownlint-cli pre-commit s shellcheck tidy vim yamllint yt-dlp zizmor"
 
 _is_known_config_path() {
   local top_level
