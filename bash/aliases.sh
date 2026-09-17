@@ -10,6 +10,7 @@ alias brwe='brew' # "I can't type" (as noted)
 
 # Tool enhancements
 alias batp='bat -p'
+alias epoch='date +%s'
 alias pbat='bat -p'
 alias profile='source ${HOME}/.bash_profile'
 alias ps='ps -efww'
