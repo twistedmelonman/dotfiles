@@ -132,23 +132,24 @@ repos:
   # Defers to a repo-local markdownlint config when the target repo has one
   # (e.g. a fork of someone else's repo with its own conventions) instead of
   # always forcing our personal global config — see smartwatermelon/dotfiles#116.
-  # Without --config, markdownlint auto-discovers .markdownlint.{json,yaml,yml,jsonc}
-  # / .markdownlintrc by walking up from each target file, so we only need to
-  # check whether the repo root already has one of those.
+  #
+  # That deferral used to be exclusive: the repo-local branch passed no
+  # --config at all, so a repo with its own config inherited NONE of the
+  # canonical rule disables. MD060 is disabled canonically because it rejects
+  # the table style terraform-docs emits, so a repo whose config predates
+  # MD060 got the rule at its default and every commit touching a generated
+  # README was blocked — with --fix unable to repair it. See #308 and
+  # twistedmelonman/claude-config#533.
+  #
+  # lint-markdown.sh merges the two instead: canonical policy as the base,
+  # repo keys layered on top. That matches how CI resolves config
+  # (github-workflows standards/run-standards.sh:193-197), so the local gate
+  # and standards-check agree on the rules.
   - repo: local
     hooks:
       - id: markdownlint
         name: "Markdown Lint (fix)"
-        entry: >-
-          bash -c 'has_local_config=0;
-          for f in .markdownlint.json .markdownlint.yaml .markdownlint.yml
-          .markdownlint.jsonc .markdownlintrc; do
-          [[ -f "$f" ]] && { has_local_config=1; break; }; done;
-          if [[ "$has_local_config" -eq 1 ]]; then
-          markdownlint --fix "$@";
-          else
-          markdownlint --fix --config "$HOME/.config/markdownlint-cli/.markdownlint.json" "$@";
-          fi' --
+        entry: bash -c '$HOME/.config/git/hooks/lint-markdown.sh "$@"' --
         language: system
         types: [markdown]
         pass_filenames: true
