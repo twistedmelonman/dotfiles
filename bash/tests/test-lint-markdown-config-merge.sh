@@ -141,6 +141,51 @@ else
 fi
 
 # ---------------------------------------------------------------------
+# Case 4b: missing canonical config AND no repo config.
+#
+# Case 4 covers this only when a repo config exists. Without one the hook
+# used to exec `markdownlint --config <nonexistent>`, which exits 4 with a
+# raw ENOENT naming a path the user never configured -- so identical input
+# (canonical absent) warned and continued in one branch and hard-failed the
+# commit in the other. Fresh machine, dotfiles cloned but not installed.
+#
+# The fallback cannot be "use the repo config" here, so it runs markdownlint
+# on its defaults: still linting, just without the canonical disables.
+# ---------------------------------------------------------------------
+#
+# The assertion is "warns, and runs the linter" -- NOT "exits 0". The shared
+# fixture carries a terraform-docs-style table that MD060 rejects at its
+# default, which is exactly why MD060 is disabled canonically. Asserting exit
+# 0 here would demand the defaults accept a file the canonical policy exists
+# to permit, and would fail for a legitimate lint finding.
+c4b="${TMPROOT}/case4b"
+mkdir -p "${c4b}"
+printf '# Title\n\nSome text.\n' >"${c4b}/README.md"
+c4b_out="$(cd "${c4b}" && MARKDOWNLINT_CANONICAL_CONFIG="${TMPROOT}/does-not-exist.json" bash "${HOOK}" README.md 2>&1)"
+c4b_rc=$?
+if ((c4b_rc == 0)) && grep -q 'canonical config not found' <<<"${c4b_out}"; then
+  _pass "missing canonical, no repo config: warns and uses defaults"
+else
+  _fail "missing canonical, no repo config: expected a warning and exit 0, got rc=${c4b_rc}"
+  echo "${c4b_out}" >&2
+fi
+
+# The fallback must still LINT. A fallback that silently passes everything
+# would turn a missing config into "markdown is never checked on this
+# machine", which is the failure mode this hook exists to prevent.
+c4c="${TMPROOT}/case4c"
+_write_case "${c4c}"
+printf 'not a heading\n\n# Later\n' >"${c4c}/bad.md"
+c4c_out="$(cd "${c4c}" && MARKDOWNLINT_CANONICAL_CONFIG="${TMPROOT}/does-not-exist.json" bash "${HOOK}" bad.md 2>&1)"
+c4c_rc=$?
+if ((c4c_rc != 0)) && grep -q 'MD041' <<<"${c4c_out}"; then
+  _pass "missing canonical fallback still enforces default rules"
+else
+  _fail "missing canonical fallback did not lint (rc=${c4c_rc}) -- a silent pass"
+  echo "${c4c_out}" >&2
+fi
+
+# ---------------------------------------------------------------------
 # Case 5: no files passed. pre-commit still invokes the hook; it must not
 # invent a failure.
 # ---------------------------------------------------------------------

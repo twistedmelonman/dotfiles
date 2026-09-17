@@ -54,7 +54,25 @@ main() {
 
   local repo_config merged
   if ! repo_config="$(_find_repo_config)"; then
-    # No repo config: the canonical file is the whole policy.
+    # No repo config: the canonical file is the whole policy -- but only if it
+    # exists. Passing a nonexistent path hands markdownlint a raw ENOENT and
+    # exit 4, blocking the commit with an error naming a path the user never
+    # configured. That is what happens on a fresh machine where dotfiles is
+    # cloned but not yet installed.
+    #
+    # The canonical-missing case is already handled below for repos that DO
+    # have their own config, where it warns and falls back. Without this
+    # branch the two paths disagree on identical input: warn-and-continue with
+    # a repo config, hard-fail without one.
+    #
+    # The fallback here cannot be "use the repo config" -- there isn't one --
+    # so run markdownlint on its built-in defaults. That still lints (MD041 and
+    # friends fire), it just lacks the canonical disables.
+    if [[ ! -f "${CANONICAL}" ]]; then
+      printf 'lint-markdown: canonical config not found at %s; using markdownlint defaults\n' \
+        "${CANONICAL}" >&2
+      exec markdownlint --fix "$@"
+    fi
     exec markdownlint --fix --config "${CANONICAL}" "$@"
   fi
 
