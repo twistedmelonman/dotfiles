@@ -88,9 +88,16 @@ repos:
   # YAML linting
   - repo: local
     hooks:
+      # Wrapped rather than bare: the bare binary passed no -c, so yamllint
+      # fell back to its own discovery and used its built-in `default` preset
+      # on any machine without dotfiles installed — stricter than the fleet's
+      # `relaxed` base, blocking on `line-length` (error at 80 vs warning at
+      # 120) and `indentation` (error vs warning), so local and CI disagreed
+      # by construction. The wrapper resolves the config exactly as
+      # run-standards.sh:157-161 does. See twistedmelonman/claude-config#532.
       - id: yamllint
         name: "YAML Lint (yamllint)"
-        entry: yamllint
+        entry: bash -c '$HOME/.config/git/hooks/lint-yamllint.sh "$@"' --
         language: system
         types: [yaml]
         pass_filenames: true
