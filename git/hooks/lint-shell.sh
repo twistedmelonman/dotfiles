@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Resolve the config the way CI does instead of leaving shellcheck to its
+# ancestor search, which reaches $HOME and picked up enable=all -- 87 findings
+# on a tree CI calls clean (claude-config#534).
+#
+# An empty result is the fresh-machine fallback: run bare rather than fail on a
+# path the user never set.
+SHELLCHECK_RCFILE="$("$(dirname "${BASH_SOURCE[0]}")/lint-shellcheck.sh")"
+shellcheck_rc=()
+[[ -n "${SHELLCHECK_RCFILE}" ]] && shellcheck_rc=(--rcfile "${SHELLCHECK_RCFILE}")
+
 # Track which files were modified and which have remaining issues
 declare -A fixed_by_shellcheck=() fixed_by_shfmt=() failed_files=()
 declare -A format_advisories=()
@@ -60,7 +70,7 @@ for f in "$@"; do
     # noise. Re-enable with --exclude='' if stricter checking is needed.
 
     # Run shellcheck once in diff mode
-    shellcheck_diff=$(shellcheck --severity=warning --exclude=SC2312 --format=diff "${f}" 2>&1 || true)
+    shellcheck_diff=$(shellcheck "${shellcheck_rc[@]}" --severity=warning --exclude=SC2312 --format=diff "${f}" 2>&1 || true)
 
     if [[ -n "${shellcheck_diff}" ]]; then
       # Try to auto-fix with diff output
@@ -78,14 +88,14 @@ for f in "$@"; do
         fixed_by_shellcheck["${f}"]=1
 
         # After successful auto-fix, check if any issues remain
-        if ! shellcheck --severity=warning --exclude=SC2312 "${f}" >/dev/null 2>&1; then
-          remaining=$(shellcheck --severity=warning --exclude=SC2312 "${f}" 2>&1 || true)
+        if ! shellcheck "${shellcheck_rc[@]}" --severity=warning --exclude=SC2312 "${f}" >/dev/null 2>&1; then
+          remaining=$(shellcheck "${shellcheck_rc[@]}" --severity=warning --exclude=SC2312 "${f}" 2>&1 || true)
           issues_remaining+="ShellCheck:\n${remaining}\n"
         fi
       else
         # Patch failed (e.g. issues not auto-fixable) - get human-readable output
         rm -f "${tmpfile}"
-        remaining=$(shellcheck --severity=warning --exclude=SC2312 "${f}" 2>&1 || true)
+        remaining=$(shellcheck "${shellcheck_rc[@]}" --severity=warning --exclude=SC2312 "${f}" 2>&1 || true)
         issues_remaining+="ShellCheck:\n${remaining}\n"
       fi
     fi
