@@ -93,8 +93,9 @@ repos:
       # on any machine without dotfiles installed — stricter than the fleet's
       # `relaxed` base, blocking on `line-length` (error at 80 vs warning at
       # 120) and `indentation` (error vs warning), so local and CI disagreed
-      # by construction. The wrapper resolves the config exactly as
-      # run-standards.sh:157-161 does. See twistedmelonman/claude-config#532.
+      # by construction. The wrapper resolves the config exactly as the
+      # yamllint block in run-standards.sh does. See
+      # twistedmelonman/claude-config#532.
       - id: yamllint
         name: "YAML Lint (yamllint)"
         entry: bash -c '$HOME/.config/git/hooks/lint-yamllint.sh "$@"' --
@@ -149,9 +150,9 @@ repos:
   # twistedmelonman/claude-config#533.
   #
   # lint-markdown.sh merges the two instead: canonical policy as the base,
-  # repo keys layered on top. That matches how CI resolves config
-  # (github-workflows standards/run-standards.sh:193-197), so the local gate
-  # and standards-check agree on the rules.
+  # repo keys layered on top. That matches how CI resolves config (the
+  # markdownlint block in github-workflows standards/run-standards.sh), so
+  # the local gate and standards-check agree on the rules.
   - repo: local
     hooks:
       - id: markdownlint

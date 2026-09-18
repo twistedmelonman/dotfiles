@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # YAML lint wrapper for the `yamllint` pre-commit hook.
 #
-# Resolves the config the way CI does (standards/run-standards.sh:147-150):
+# Resolves the config the way CI does. The upstream original is the yamllint
+# config block in standards/run-standards.sh, whose resolution loop reads:
 #
 #   cfg=""
 #   for c in .yamllint .yamllint.yml .yamllint.yaml; do
@@ -27,9 +28,9 @@
 # rather than letting yamllint choose.
 #
 # UNLIKE the markdownlint wrapper next door, this does NOT merge configs.
-# yamllint's -c takes a single file, and CI's own resolution at
-# run-standards.sh:147-150 is likewise either/or: the first repo-local name
-# that exists wins outright, and the canonical file is used only when none do.
+# yamllint's -c takes a single file, and CI's own resolution in that same
+# block is likewise either/or: the first repo-local name that exists wins
+# outright, and the canonical file is used only when none do.
 # An earlier handoff speculated this "may legitimately be a merge because
 # yamllint has `extends:` semantics". It is not. `extends:` is a directive
 # *inside* a config file, resolved by yamllint itself; it is not config
