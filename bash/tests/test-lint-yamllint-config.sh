@@ -18,8 +18,9 @@
 # comments-indentation=warning, octal-values=disabled.
 #
 # Unlike the markdownlint wrapper, this does NOT merge configs: yamllint's -c
-# loads a single file, and CI (run-standards.sh:147-150) is likewise
-# either/or. The assertions below encode that difference deliberately.
+# loads a single file, and CI (the yamllint config block in
+# run-standards.sh) is likewise either/or. The assertions below encode that
+# difference deliberately.
 set -uo pipefail
 unset CDPATH
 
@@ -103,7 +104,7 @@ fi
 
 # ---------------------------------------------------------------------
 # Case 2: repo config present. It must WIN over the canonical file, matching
-# run-standards.sh:147-150. Asserted with a repo config that is deliberately
+# CI's yamllint block. Asserted with a repo config that is deliberately
 # stricter than canonical — if the canonical were used instead, the finding
 # would not fire and this would silently pass.
 # ---------------------------------------------------------------------
