@@ -7,9 +7,22 @@ set -euo pipefail
 #
 # An empty result is the fresh-machine fallback: run bare rather than fail on a
 # path the user never set.
-SHELLCHECK_RCFILE="$("$(dirname "${BASH_SOURCE[0]}")/lint-shellcheck.sh")"
+#
+# The resolver is a sibling symlink that install.sh creates. A machine that
+# pulls this commit and has not re-run install.sh does not have it yet, and
+# under `set -e` calling it would exit 127 and hard-block every commit touching
+# a shell file. Degrade to shellcheck's own discovery and say why, rather than
+# blocking work on a deploy step the user has not run yet.
+_lint_shell_resolver="$(dirname "${BASH_SOURCE[0]}")/lint-shellcheck.sh"
 shellcheck_rc=()
-[[ -n "${SHELLCHECK_RCFILE}" ]] && shellcheck_rc=(--rcfile "${SHELLCHECK_RCFILE}")
+if [[ -x "${_lint_shell_resolver}" ]]; then
+  SHELLCHECK_RCFILE="$("${_lint_shell_resolver}")"
+  [[ -n "${SHELLCHECK_RCFILE}" ]] && shellcheck_rc=(--rcfile "${SHELLCHECK_RCFILE}")
+else
+  echo "[lint-shell] lint-shellcheck.sh not found at ${_lint_shell_resolver}" >&2
+  echo "[lint-shell] run install.sh to link it; using shellcheck discovery meanwhile" >&2
+  echo "[lint-shell] local findings may differ from CI (claude-config#534)" >&2
+fi
 
 # Track which files were modified and which have remaining issues
 declare -A fixed_by_shellcheck=() fixed_by_shfmt=() failed_files=()
