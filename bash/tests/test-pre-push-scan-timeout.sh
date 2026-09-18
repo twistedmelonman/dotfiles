@@ -167,7 +167,20 @@ if [[ "${force_fallback}" == "1" ]]; then
 fi
 
 start=${SECONDS}
-run_bounded "${secs}" "$@"
+# The command's own output goes to /dev/null, NOT to this script's stdout.
+#
+# This driver runs inside a command substitution, so its stdout is a pipe the
+# caller reads until every writer closes it. A command that leaves a child
+# behind — which the watchdog fallback does, since it kills a pid rather than
+# a process group (dotfiles#350) — leaves that child holding the pipe open.
+# The caller then blocks for the child's full lifetime even though
+# run_bounded returned promptly.
+#
+# Measured before this redirect: the SIGTERM-ignoring case returned rc=124 in
+# 4s of measured time while the command substitution took 60s to close. Three
+# such cases were 180s of this file's 197s runtime. Only the line below is
+# read by the caller, so discarding the command's output costs no coverage.
+run_bounded "${secs}" "$@" >/dev/null 2>&1
 rc=$?
 echo "${rc} $((SECONDS - start))"
 DRIVER_EOF
@@ -181,6 +194,37 @@ TEST_BASH="${BASH:-bash}"
 
 run_case() {
   "${TEST_BASH}" "${DRIVER}" "$@"
+}
+
+# Wall clock for the whole command substitution, set by every run_case call
+# below via _timed.
+#
+# This is deliberately measured OUTSIDE the pipe, because the driver's own
+# elapsed count is measured inside it and cannot see the failure it needs to
+# report. When an orphaned child held the pipe open (dotfiles#350), the driver
+# reported 4s while the caller blocked for 60s — and every assertion in this
+# file passed, because all of them read the driver's number. A test that
+# cannot observe its own 15x overrun has a blind spot exactly where its
+# subject matter is.
+#
+# Every timing case below asserts on BOTH: the inner number for run_bounded's
+# behavior, this one for what the caller actually experienced.
+CASE_WALL=0
+_timed() {
+  local _t0=${SECONDS}
+  case_out="$(_timed_inner "$@")"
+  CASE_WALL=$((SECONDS - _t0))
+}
+# Indirection so `_timed` can wrap an environment-prefixed call the same way
+# it wraps a bare one.
+_timed_inner() {
+  if [[ "$1" == *=* ]]; then
+    local _assign="$1"
+    shift
+    env "${_assign}" "${TEST_BASH}" "${DRIVER}" "$@"
+  else
+    run_case "$@"
+  fi
 }
 
 # Fixture setup is complete. The cases below assert on non-zero exit codes as
@@ -199,7 +243,12 @@ for mode in timeout fallback; do
 
   # A command that outlives its budget is terminated and reported as 124,
   # matching coreutils' expiry convention.
-  case_out="$(run_case "${force}" 3 sleep 60)"
+  #
+  # Budget 1s against a 10s command. The budget cannot go below 1: the
+  # watchdog's wait loop polls in `sleep 1` steps, so a sub-second budget is
+  # not representable on that path. 10s for the command keeps a clear ratio
+  # against the budget while bounding how long a leaked child could linger.
+  _timed "${force}" 1 sleep 10
   read -r rc elapsed <<<"${case_out}"
   if [[ "${rc}" == "124" ]]; then
     _pass "${label}: an over-budget command exits 124"
@@ -207,14 +256,19 @@ for mode in timeout fallback; do
     _fail "${label}: over-budget command exited ${rc}, expected 124"
   fi
   # The assertion is "bounded", not "bounded precisely". The ceiling is well
-  # clear of the 3s budget plus SIGKILL escalation, but far below the 60s the
+  # clear of the 1s budget plus SIGKILL escalation, but far below the 10s the
   # command would run unbounded — so a loaded runner cannot flake it, while a
   # genuinely unbounded run still fails. `SECONDS` has 1-second granularity,
   # which the margin absorbs.
-  if ((elapsed <= 20)); then
-    _pass "${label}: terminated near the budget (${elapsed}s of a 60s command)"
+  if ((elapsed <= 6)); then
+    _pass "${label}: terminated near the budget (${elapsed}s of a 10s command)"
   else
-    _fail "${label}: took ${elapsed}s for a 3s budget — not actually bounded"
+    _fail "${label}: took ${elapsed}s for a 1s budget — not actually bounded"
+  fi
+  if ((CASE_WALL <= 6)); then
+    _pass "${label}: the caller also returned in ${CASE_WALL}s"
+  else
+    _fail "${label}: run_bounded reported ${elapsed}s but the caller blocked ${CASE_WALL}s — a child outlived the kill (#350)"
   fi
 
   # Success and failure statuses must pass through untouched, or the hook
@@ -237,15 +291,21 @@ for mode in timeout fallback; do
 
   # An under-budget command must return as soon as it finishes rather than
   # waiting out the whole budget.
-  case_out="$(run_case "${force}" 30 sleep 2)"
+  _timed "${force}" 5 sleep 1
   read -r rc elapsed <<<"${case_out}"
   # The point is that the watchdog does not hold the budget open after the
-  # command finishes. Anything comfortably under 30s proves that; the margin is
-  # sized so shell overhead on a saturated runner cannot flake it.
-  if [[ "${rc}" == "0" ]] && ((elapsed < 25)); then
-    _pass "${label}: returns when the command finishes (${elapsed}s of a 30s budget)"
+  # command finishes. Returning in well under the 5s budget proves that; the
+  # margin absorbs `SECONDS`' 1-second granularity and shell overhead on a
+  # saturated runner.
+  if [[ "${rc}" == "0" ]] && ((elapsed < 4)); then
+    _pass "${label}: returns when the command finishes (${elapsed}s of a 5s budget)"
   else
-    _fail "${label}: exit ${rc} after ${elapsed}s — expected 0 in well under 30s"
+    _fail "${label}: exit ${rc} after ${elapsed}s — expected 0 in well under 5s"
+  fi
+  if ((CASE_WALL < 4)); then
+    _pass "${label}: the caller also returned early (${CASE_WALL}s)"
+  else
+    _fail "${label}: caller blocked ${CASE_WALL}s on a 1s command — a child outlived it (#350)"
   fi
 done
 
@@ -266,12 +326,21 @@ cat >"${IGNORER}" <<'IGNORER_EOF'
 #!/usr/bin/env bash
 # Survives SIGTERM; only SIGKILL can stop this.
 #
-# The `sleep` runs in the foreground, so killing this script tears it down with
-# it. Verified by sampling `pgrep -f "sleep 60"` across a full run: the count
-# rises during each case and returns to zero between them, with none left
-# behind at the end.
+# The `sleep` is a foreground CHILD of this script, and it does NOT die with
+# it on the watchdog path. An earlier version of this comment claimed the
+# opposite — "killing this script tears it down with it... none left behind"
+# — and that is measurably false: `kill -KILL <script-pid>` leaves the sleep
+# running, because the watchdog signals a pid rather than a process group.
+# That is the hook defect tracked in dotfiles#350; GNU `timeout` signals the
+# group and does tear it down, which is why only the fallback path was slow.
+#
+# The child shape is kept deliberately rather than collapsed into an `exec`:
+# semgrep spawns workers, so a fixture whose children outlive it is the
+# representative case, and #350's eventual fix needs it to assert against.
+# The driver redirects this command's output away from the caller's pipe, so
+# a leaked child no longer holds the command substitution open.
 trap '' TERM
-sleep 60
+sleep 10
 IGNORER_EOF
 chmod +x "${IGNORER}"
 
@@ -283,7 +352,7 @@ for mode in timeout fallback; do
     label="watchdog fallback"
   fi
 
-  case_out="$(run_case "${force}" 2 "${IGNORER}")"
+  _timed "${force}" 1 "${IGNORER}"
   read -r rc elapsed <<<"${case_out}"
 
   # GNU timeout reports 124 on expiry; the fallback normalizes SIGKILL's 137 to
@@ -294,11 +363,19 @@ for mode in timeout fallback; do
     _fail "${label}: SIGTERM-ignoring command exited ${rc}, expected 124"
   fi
 
-  # The escalation must actually land. Unterminated, the command runs 60s.
-  if ((elapsed <= 20)); then
-    _pass "${label}: escalation killed it in ${elapsed}s, not its full 60s"
+  # The escalation must actually land. Unterminated, the command runs 10s.
+  # 1s budget + 2s default grace lands near 3s, so a ceiling of 6 separates a
+  # working escalation from one that never fires without depending on exact
+  # scheduling.
+  if ((elapsed <= 6)); then
+    _pass "${label}: escalation killed it in ${elapsed}s, not its full 10s"
   else
     _fail "${label}: took ${elapsed}s — the SIGKILL escalation did not land"
+  fi
+  if ((CASE_WALL <= 6)); then
+    _pass "${label}: the caller also returned in ${CASE_WALL}s"
+  else
+    _fail "${label}: run_bounded reported ${elapsed}s but the caller blocked ${CASE_WALL}s — the killed command left a child holding the pipe (#350)"
   fi
 done
 
@@ -324,11 +401,11 @@ cat >"${SELF_SIGNALLER}" <<'SIGNALLER_EOF'
 # any external kill — an operator, an OOM reaper, a parent tearing down.
 sleep 1
 kill -TERM $$
-sleep 30
+sleep 10
 SIGNALLER_EOF
 chmod +x "${SELF_SIGNALLER}"
 
-case_out="$(run_case 1 30 "${SELF_SIGNALLER}")"
+_timed 1 10 "${SELF_SIGNALLER}"
 read -r rc elapsed <<<"${case_out}"
 
 if [[ "${rc}" == "143" ]]; then
@@ -339,10 +416,15 @@ else
   _fail "watchdog fallback: signal death reported ${rc}, expected 143"
 fi
 
-if ((elapsed < 15)); then
-  _pass "watchdog fallback: returned on the signal (${elapsed}s), not at the 30s budget"
+if ((elapsed < 5)); then
+  _pass "watchdog fallback: returned on the signal (${elapsed}s), not at the 10s budget"
 else
   _fail "watchdog fallback: took ${elapsed}s — did not return on the signal"
+fi
+if ((CASE_WALL < 5)); then
+  _pass "watchdog fallback: the caller also returned on the signal (${CASE_WALL}s)"
+else
+  _fail "watchdog fallback: caller blocked ${CASE_WALL}s — a child outlived the signalled process (#350)"
 fi
 
 # ---------------------------------------------------------------
@@ -402,11 +484,18 @@ done
 # branches disagreed about the same knob (smartwatermelon/dotfiles#279).
 #
 # Measured against a SIGTERM-ignoring command, which is the only input that
-# reaches the escalation loop at all. A 6s grace must visibly outlast the 2s
-# default before SIGKILL lands.
+# reaches the escalation loop at all. A raised grace must visibly outlast the
+# 2s default before SIGKILL lands.
+#
+# The grace cannot be scaled below 1: run_bounded validates it against
+# `^[0-9]+$` and multiplies by 10 for its 0.1s poll steps, so a fractional
+# value is rejected and falls back to the default — which would make this
+# case assert the default against itself. 4s is the smallest raised value
+# that stays separable from the 2s default at `SECONDS`' 1-second
+# granularity: 1s budget + 4s grace lands near 5s against the default's ~3s.
 echo "Case: the fallback grace loop honors SEMGREP_TIMEOUT_KILL_GRACE"
 
-case_out="$(SEMGREP_TIMEOUT_KILL_GRACE=6 run_case 1 2 "${IGNORER}")"
+_timed SEMGREP_TIMEOUT_KILL_GRACE=4 1 1 "${IGNORER}"
 read -r rc elapsed <<<"${case_out}"
 
 if [[ "${rc}" == "124" ]]; then
@@ -415,23 +504,32 @@ else
   _fail "watchdog fallback: expected 124 with a raised grace, got ${rc}"
 fi
 
-# 2s budget + 6s grace = ~8s. The hardcoded 2s grace would land near 4s, so a
-# lower bound of 6s separates the two without depending on exact scheduling.
-if ((elapsed >= 6)); then
-  _pass "watchdog fallback: grace of 6s was honored (escalated at ${elapsed}s)"
+# 1s budget + 4s grace = ~5s. The hardcoded 2s grace would land near 3s, so a
+# lower bound of 4s separates the two without depending on exact scheduling.
+if ((elapsed >= 4)); then
+  _pass "watchdog fallback: grace of 4s was honored (escalated at ${elapsed}s)"
 else
   _fail "watchdog fallback: escalated at ${elapsed}s — the grace loop ignored SEMGREP_TIMEOUT_KILL_GRACE"
 fi
 
 # A non-numeric value must not break the arithmetic under `set -e`; it falls
 # back to the same 2s default the GNU path uses.
-case_out="$(SEMGREP_TIMEOUT_KILL_GRACE=bogus run_case 1 2 "${IGNORER}")"
+_timed SEMGREP_TIMEOUT_KILL_GRACE=bogus 1 1 "${IGNORER}"
 read -r rc elapsed <<<"${case_out}"
 
 if [[ "${rc}" == "124" ]]; then
   _pass "watchdog fallback: a non-numeric grace falls back instead of aborting"
 else
   _fail "watchdog fallback: non-numeric grace exited ${rc}, expected 124"
+fi
+
+# The fallback must land near the 2s DEFAULT, not run to the command's full
+# length. Without this, "falls back" is asserted only by the exit code, which
+# a grace loop that ignored the value entirely would also satisfy.
+if ((elapsed <= 6)); then
+  _pass "watchdog fallback: non-numeric grace used the default (${elapsed}s)"
+else
+  _fail "watchdog fallback: took ${elapsed}s — did not fall back to the 2s default"
 fi
 
 echo
