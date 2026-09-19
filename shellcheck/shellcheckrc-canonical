@@ -1,0 +1,38 @@
+# Canonical shellcheck config for standards-check.yml.
+#
+# shellcheck was the only linter in run-standards.sh with no canonical config:
+# yamllint and markdownlint ship one here, while shellcheck ran bare and
+# resolved its config from whatever happened to be on the machine. Because
+# shellcheck searches ancestor directories, a local run under a checkout whose
+# parent carries a ~/.shellcheckrc silently picked up settings CI never saw --
+# 68 findings locally against CI's 24 on the same tree.
+# See twistedmelonman/claude-config#534.
+#
+# Measured 2026-09-18 across every clone with shell files: this config takes
+# 21 of 24 repos to zero findings, including all three that previously carried
+# their own .shellcheckrc. Those three are removed in the same change.
+#
+# external-sources + source-path resolve files sourced through a variable path
+# (`source "${LIB_DIR}/foo.sh"`) instead of silencing SC1091. Resolving means
+# the sourced code is analyzed; silencing means it is skipped. source-path
+# SCRIPTDIR additionally maps sources written against a deployed layout back to
+# the repo layout, where those files sit beside the sourcing script.
+#
+# SC2310 (function invoked in a conditional, disabling set -e) is informational
+# and fires throughout normal guard-clause style. It is disabled fleet-wide
+# rather than per-repo so no repo needs its own config to silence it.
+#
+# `enable=all` is deliberately NOT set here. Measured, it takes four otherwise
+# clean repos to 124+ combined findings (dotfiles 63, vpn-lan-bridge 12,
+# claude-wrapper 10, scripts 3, LaunchAgents 1). A base that forces per-repo
+# exceptions is not a base. It stays in ~/.shellcheckrc as the stricter
+# interactive config: local advisory, CI enforcing.
+#
+# NOTE: shellcheck config files do NOT merge. A repo-root .shellcheckrc halts
+# the search entirely and --rcfile replaces it, so a per-repo exception must
+# restate this whole file and silently drifts when this one changes. Keep
+# exceptions rare, and prefer a file-level `# shellcheck disable` with a
+# comment over a repo-level config.
+external-sources=true
+source-path=SCRIPTDIR
+disable=SC2310
