@@ -575,6 +575,124 @@ _gh_wrapper_force_draft_for_off_org() {
   return 0
 }
 
+# --- approval gate -------------------------------------------------------------
+# Refuse to write PR or issue body text unless Andrew has visually approved
+# those exact bytes. Approval lives on disk in gate-review's approved/
+# directory; this asks gate-review whether the body file hashes to something
+# approved.
+#
+# An earlier version of this function read PERSONIFY_OK from the environment.
+# That channel is DEAD and must not be reintroduced: the Bash tool runs in a
+# process that does not inherit the interactive shell's environment, so an
+# env-var ack is unsatisfiable by the human, not merely strict. Measured
+# 2026-09-18. See hook-block-personify.sh for the full note.
+#
+# Manual-invocation half; ~/.claude/scripts/hook-block-personify.sh covers the
+# Bash-tool path. Redundant by design, so neither one being bypassed lets text
+# through. The rule enforced here is deliberately identical to the hook's, so
+# the human learns one rule and not two:
+#
+#   --body-file/-F with an ABSOLUTE path -> verifiable, checked
+#   --body/-b "inline text"              -> blocked, nothing to hash
+#   a RELATIVE path or ~/... or $VAR/... -> blocked, resolved against a cwd
+#       this function and gh may disagree about
+#
+# TITLES stay ungated -- one line by nature. A subcommand carrying no body flag
+# passes, so `gh pr edit --add-label` and `gh pr review --approve` are unaffected.
+#
+# Fails CLOSED when gate-review.sh is absent, matching hook-block-personify.sh.
+# A redundant pair whose halves disagree about the unverifiable case is not
+# redundant. A machine without claude-config installed cannot write PR bodies
+# through this wrapper; that is the intended outcome, not an oversight.
+#
+# Same arg walk as _gh_wrapper_force_draft_for_off_org so detection cannot drift.
+_gh_wrapper_approval_gate() {
+  local sub="" subsub="" skip_next=0 arg
+  local body_file="" inline=0 want_path=0
+
+  for arg in "$@"; do
+    [[ "${arg}" == "--" ]] && break
+    if [[ "${skip_next}" == "1" ]]; then
+      skip_next=0
+      continue
+    fi
+    if [[ "${want_path}" == "1" ]]; then
+      body_file="${arg}"
+      want_path=0
+      continue
+    fi
+    case "${arg}" in
+      -R | --repo | --hostname | --config-dir | --token) skip_next=1 ;;
+      -b | --body) inline=1 ;;
+      --body=* | -b=*) inline=1 ;;
+      -F | --body-file) want_path=1 ;;
+      --body-file=*) body_file="${arg#*=}" ;;
+      -F*) body_file="${arg#-F}" ;;
+      -R*) ;;
+      --*=*) ;;
+      -*) ;;
+      *)
+        if [[ -z "${sub}" ]]; then
+          sub="${arg}"
+        elif [[ -z "${subsub}" ]]; then
+          subsub="${arg}"
+        fi
+        ;;
+    esac
+  done
+
+  case "${sub}/${subsub}" in
+    pr/create | pr/comment | pr/edit | issue/create | issue/comment | issue/edit) ;;
+    *) return 0 ;;
+  esac
+
+  # No body flag at all: no prose is being written. Titles and labels pass.
+  if [[ "${inline}" == "0" && -z "${body_file}" ]]; then
+    return 0
+  fi
+
+  local gate="${HOME}/.claude/scripts/gate-review.sh"
+  local reason=""
+
+  if [[ "${inline}" == "1" ]]; then
+    reason="text given inline; only a file can be verified"
+  elif [[ "${body_file}" != /* ]]; then
+    reason="path '${body_file}' is not absolute; gh and this gate would resolve it differently"
+  elif [[ ! -f "${body_file}" ]]; then
+    reason="no such file: ${body_file}"
+  elif [[ ! -x "${gate}" ]]; then
+    reason="gate-review.sh missing at ${gate}; cannot verify"
+  elif ! "${gate}" check "${body_file}"; then
+    reason="the bytes in ${body_file} do not match anything approved"
+  else
+    return 0
+  fi
+
+  {
+    echo "[gh] 🛑 BLOCKED: ${sub} ${subsub} body has not been visually approved."
+    echo "[gh]"
+    echo "[gh]   reason: ${reason}"
+    echo "[gh]"
+    echo "[gh] Every PR and issue body must be read and approved in the editor"
+    echo "[gh] before it is written. To do that:"
+    echo "[gh]"
+    echo "[gh]   1. Write the body to a file."
+    echo "[gh]   2. ${gate} stage <label> <file>"
+    echo "[gh]   3. ${gate} open"
+    echo "[gh]   4. Andrew reads the batch and types APPROVED in the STATUS line."
+    echo "[gh]   5. Re-run against the APPROVED file, absolute path:"
+    echo "[gh]        gh ${sub} ${subsub} --title t --body-file ${HOME}/.claude/gate-review/approved/<label>"
+    echo "[gh]"
+    echo "[gh]      Use the approved copy, not the file you staged: if he edited"
+    echo "[gh]      the text in the editor, his edits are what he approved and"
+    echo "[gh]      the original no longer matches."
+    echo "[gh]"
+    echo "[gh] Approval is his to give. Staging and opening on his behalf is fine;"
+    echo "[gh] typing the word for him is not."
+  } >&2
+  return 1
+}
+
 # --- F4: scope-error hint ------------------------------------------------------
 # GH_TOKEN (the CCCLI PAT) and the keyring token are the same login; only the
 # scopes differ. When gh fails because the active token lacks a scope, say
@@ -807,6 +925,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       _gh_wrapper_sync_identity "$@" || exit 1
     fi
     _gh_wrapper_block_bypass "$@" || exit 1
+
+    _gh_wrapper_approval_gate "$@" || exit 1
     if [[ "${_gh_wrapper_help}" != "1" ]]; then
       _gh_wrapper_maybe_review strict "$@" || exit 1
       # Off-org `gh pr create` must land as a draft — hard, mechanical,
@@ -899,6 +1019,8 @@ else
 
     _gh_wrapper_block_bypass "$@" || return 1
 
+    _gh_wrapper_approval_gate "$@" || return 1
+
     if [[ "${help}" == "1" ]]; then
       # Set _GH_REVIEW_DONE so the ~/.local/bin/gh wrapper also skips review.
       _GH_REVIEW_DONE=1 command gh "$@"
@@ -945,6 +1067,6 @@ else
   # its own body into subshells, not functions it calls. Without exporting
   # these too, gh() would break in any subshell that inherits the exported
   # gh but didn't source this file (e.g. BASH_ENV unset/overridden there).
-  export -f gh sugh _gh_wrapper_block_bypass _gh_wrapper_maybe_review _gh_wrapper_review_script_path _gh_wrapper_sync_identity _gh_wrapper_find_real_gh _gh_wrapper_resolve_owner _gh_wrapper_force_draft_for_off_org _gh_wrapper_is_beacon_context _gh_wrapper_beacon_dir_is_explicit _gh_wrapper_keyring_login _gh_wrapper_keyring_users _gh_wrapper_resolve_switch_target _gh_wrapper_run_with_scope_hint _gh_wrapper_scope_from_file _gh_wrapper_print_scope_hint _gh_wrapper_redact_argv _gh_wrapper_redact_value
+  export -f gh sugh _gh_wrapper_block_bypass _gh_wrapper_approval_gate _gh_wrapper_maybe_review _gh_wrapper_review_script_path _gh_wrapper_sync_identity _gh_wrapper_find_real_gh _gh_wrapper_resolve_owner _gh_wrapper_force_draft_for_off_org _gh_wrapper_is_beacon_context _gh_wrapper_beacon_dir_is_explicit _gh_wrapper_keyring_login _gh_wrapper_keyring_users _gh_wrapper_resolve_switch_target _gh_wrapper_run_with_scope_hint _gh_wrapper_scope_from_file _gh_wrapper_print_scope_hint _gh_wrapper_redact_argv _gh_wrapper_redact_value
   export _gh_wrapper_review_script GH_WRAPPER_BEACON_DIR _GH_WRAPPER_BEACON_DIR_DEFAULT
 fi
