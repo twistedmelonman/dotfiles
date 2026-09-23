@@ -45,7 +45,7 @@ git/
 
 - **fsmonitor**: File system monitor for faster status in large repos
 - **untrackedCache**: Caches list of untracked files for performance
-- **Auto-correct**: Prompts before running autocorrected commands
+- **Auto-correct**: Suggests autocorrected commands, runs after two seconds
 
 ### Workflow Settings
 
