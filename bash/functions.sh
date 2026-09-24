@@ -1168,20 +1168,34 @@ export -f opp # Exported - available inside CCCLI sessions
 # ============================================================================
 # Open PRs and issues across my GitHub orgs
 # ============================================================================
-# my_prs / my_issues (aliased as my-prs / my-issues) list every open PR or
-# issue in unarchived repos of twistedmelonman, smartwatermelon and
-# nightowlstudiollc, whoever wrote it.
+# my_prs / my_issues (aliased as my-prs / my-issues) list open PRs or issues
+# in unarchived repos. What they search depends on the machine:
+#
+#   personal  every open item in twistedmelonman, smartwatermelon and
+#             nightowlstudiollc, whoever wrote it.
+#   work      every open item, under any owner, that involves andrewmrich
+#             (author, assignee, mention, commenter or reviewer).
+#
+# The machine is a work machine when ${BEACON_WORKDIR} exists: the same test
+# env.sh uses for CDPATH. The default is spelled out because BASH_ENV loads
+# this file without env.sh.
 #
 # Output is a paged table on a terminal and JSON when piped; --text or --json
 # forces one. Any other argument passes through to `gh search`, e.g.
 # `my-issues --label bug`.
 #
-# Each org is searched on its own, with GH_TOKEN_<ORG> when that is set
-# (claude-wrapper sets all three) and with the current gh auth otherwise (the
-# keyring, in an interactive shell). The shared CCCLI GH_TOKEN cannot see
+# Personal: each org is searched on its own, with GH_TOKEN_<ORG> when that is
+# set (claude-wrapper sets all three) and with the current gh auth otherwise
+# (the keyring, in an interactive shell). The shared CCCLI GH_TOKEN cannot see
 # private repos in smartwatermelon or nightowlstudiollc, so a session holding
 # only that token undercounts. The gh wrapper picks the identity from the
-# single --owner, so the result does not depend on the current directory.
+# single --owner.
+#
+# Work: the search has no --owner, so the gh wrapper would pick the identity
+# from the current directory, and @me would be twistedmelonman inside a
+# personal checkout. The search therefore runs with andrewmrich's keyring
+# token, from the temp dir, which has no git remote for the wrapper to read.
+# Either way the result does not depend on the current directory.
 #
 # Issues and PRs are separate searches rather than `gh search issues
 # --include-prs`: across several owners with --archived=false, GitHub answers
@@ -1213,25 +1227,50 @@ _gh_my_search() (
   tmp=$(mktemp -d) || exit 1
   trap 'rm -rf "${tmp}"' EXIT
 
+  # One search per entry: a label for messages, the token to run it with
+  # (empty = current gh auth) and the argument that scopes it.
+  labels=()
+  tokens=()
+  scopes=()
+  if [[ -d "${BEACON_WORKDIR:-${HOME}/Developer/beacon-biosignals}" ]]; then
+    # gh auth token prints GH_TOKEN, not the keyring, when GH_TOKEN is set.
+    token=$(
+      unset GH_TOKEN GITHUB_TOKEN
+      gh auth token --user andrewmrich 2>/dev/null
+    )
+    if [[ -z "${token}" ]]; then
+      echo "[my-${kind}] ERROR: gh holds no andrewmrich login. Run: gh auth login --hostname github.com" >&2
+      exit 1
+    fi
+    labels+=(andrewmrich)
+    tokens+=("${token}")
+    scopes+=(--involves=@me)
+  else
+    for pair in twistedmelonman:GH_TOKEN_TWM smartwatermelon:GH_TOKEN_SWM nightowlstudiollc:GH_TOKEN_NOS; do
+      var="${pair#*:}"
+      labels+=("${pair%%:*}")
+      tokens+=("${!var:-}")
+      scopes+=("--owner=${pair%%:*}")
+    done
+  fi
+
+  cd "${tmp}" || exit 1
+
   rc=0
-  i=0
-  for pair in twistedmelonman:GH_TOKEN_TWM smartwatermelon:GH_TOKEN_SWM nightowlstudiollc:GH_TOKEN_NOS; do
-    org="${pair%%:*}"
-    var="${pair#*:}"
-    ((i += 1))
+  for i in "${!labels[@]}"; do
     if ! (
-      if [[ -n "${!var:-}" ]]; then export GH_TOKEN="${!var}"; fi
-      gh search "${kind}" --owner="${org}" --state=open --archived=false \
+      if [[ -n "${tokens[i]}" ]]; then export GH_TOKEN="${tokens[i]}"; fi
+      gh search "${kind}" "${scopes[i]}" --state=open --archived=false \
         --limit="${limit}" --json "${fields}" "${passthru[@]}"
     ) >"${tmp}/${i}.json"; then
-      echo "[my-${kind}] ERROR: search failed for ${org}; results are incomplete." >&2
+      echo "[my-${kind}] ERROR: search failed for ${labels[i]}; results are incomplete." >&2
       echo '[]' >"${tmp}/${i}.json"
       rc=1
       continue
     fi
     count=$(jq length "${tmp}/${i}.json")
     if [[ "${count}" -ge "${limit}" ]]; then
-      echo "[my-${kind}] WARNING: ${org} hit the ${limit}-result cap; results are truncated." >&2
+      echo "[my-${kind}] WARNING: ${labels[i]} hit the ${limit}-result cap; results are truncated." >&2
     fi
   done
 
