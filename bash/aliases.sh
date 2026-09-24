@@ -32,6 +32,7 @@ alias gs='git status'
 alias gl='git log --oneline'
 alias gp='git pull'
 alias gc='git commit -m'
+alias my-prs='gh search prs --author "@me" --state open'
 
 # Exciting ways of launching Claude Code
 if [[ -f "${HOME}/.local/bin/claude-wrapper" ]]; then
