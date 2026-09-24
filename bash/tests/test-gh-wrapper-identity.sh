@@ -203,6 +203,46 @@ assert_desired_in "${beacon_repo}" "claimed owner beats beacon cwd" \
 
 cd "${HOME}/neutral-cwd"
 
+# --- --owner (gh search etc.) ------------------------------------------------
+# A single --owner names the owner the call acts on, so it must beat a Beacon
+# cwd remote; -R still beats --owner; an owner list falls back to cwd.
+# Run from a checkout whose origin is beacon-biosignals, so cwd alone would
+# resolve to andrewmrich and a pass proves --owner was read.
+assert_desired_args() {
+  local label="$1" current_user="$2" expected="$3"
+  shift 3
+  rm -f "${switch_log}"
+  printf 'github.com:\n    user: %s\n' "${current_user}" >"${HOME}/.config/gh/hosts.yml"
+  _gh_wrapper_sync_identity "$@" || true
+  local got
+  got="$(cat "${switch_log}" 2>/dev/null || true)"
+  [[ -z "${got}" ]] && got="${current_user}"
+  if [[ "${got}" == "${expected}" ]]; then
+    echo "PASS: ${label} (${expected})"
+  else
+    echo "FAIL: ${label} — expected '${expected}', got '${got}'"
+    fail=1
+  fi
+}
+beacon_origin="${HOME}/elsewhere/beacon-origin"
+mkdir -p "${beacon_origin}"
+git -C "${beacon_origin}" init -q
+git -C "${beacon_origin}" remote add origin "git@github.com:beacon-biosignals/somerepo.git"
+cd "${beacon_origin}"
+assert_desired_args "cwd alone resolves to beacon (control)" "twistedmelonman" "andrewmrich" \
+  search issues --state=open
+assert_desired_args "--owner=ORG beats beacon cwd" "andrewmrich" "twistedmelonman" \
+  search issues --owner=nightowlstudiollc
+assert_desired_args "--owner ORG (two args) beats beacon cwd" "andrewmrich" "twistedmelonman" \
+  search prs --owner smartwatermelon --state open
+assert_desired_args "owner list falls back to cwd" "twistedmelonman" "andrewmrich" \
+  search issues --owner=smartwatermelon,nightowlstudiollc
+assert_desired_args "-R beats --owner" "twistedmelonman" "andrewmrich" \
+  search issues --owner=smartwatermelon -R beacon-biosignals/x
+assert_desired_args "--owner after -- is ignored" "twistedmelonman" "andrewmrich" \
+  search issues -- --owner=smartwatermelon
+cd "${HOME}/neutral-cwd"
+
 # --- Missing-beacon-dir warning ----------------------------------------------
 # An explicitly-configured beacon dir that doesn't exist must warn on stderr;
 # an unset default that doesn't exist must stay silent (the normal state on a

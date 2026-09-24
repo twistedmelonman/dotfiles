@@ -1161,8 +1161,7 @@ export -f opp # Exported - available inside CCCLI sessions
 # ============================================================================
 # my_prs / my_issues (aliased as my-prs / my-issues) list every open PR or
 # issue in unarchived repos of twistedmelonman, smartwatermelon and
-# nightowlstudiollc, whoever wrote it. my_prs also lists open PRs I authored
-# in repos outside those orgs.
+# nightowlstudiollc, whoever wrote it.
 #
 # Output is a paged table on a terminal and JSON when piped; --text or --json
 # forces one. Any other argument passes through to `gh search`, e.g.
@@ -1172,17 +1171,22 @@ export -f opp # Exported - available inside CCCLI sessions
 # (claude-wrapper sets all three) and with the current gh auth otherwise (the
 # keyring, in an interactive shell). The shared CCCLI GH_TOKEN cannot see
 # private repos in smartwatermelon or nightowlstudiollc, so a session holding
-# only that token undercounts.
+# only that token undercounts. The gh wrapper picks the identity from the
+# single --owner, so the result does not depend on the current directory.
 #
 # Issues and PRs are separate searches rather than `gh search issues
 # --include-prs`: across several owners with --archived=false, GitHub answers
 # that with HTTP 422 ("Query must include 'is:issue' or 'is:pull-request'").
+#
+# The body is a subshell so the temp dir can be cleaned up by an EXIT trap,
+# which an interrupt cannot leave behind the way it can a RETURN trap.
 
-_gh_my_search() {
-  local kind="$1" # issues | prs
+_gh_my_search() (
+  kind="$1" # issues | prs
   shift
-  local mode="" limit=1000 arg
-  local -a passthru=()
+  mode=""
+  limit=1000
+  passthru=()
   for arg in "$@"; do
     case "${arg}" in
       --json) mode=json ;;
@@ -1194,16 +1198,14 @@ _gh_my_search() {
     if [[ -t 1 ]]; then mode=text; else mode=json; fi
   fi
 
-  local fields="repository,number,title,author,labels,updatedAt,url"
+  fields="repository,number,title,author,labels,updatedAt,url"
   [[ "${kind}" == "prs" ]] && fields+=",isDraft"
 
-  local tmp
-  tmp=$(mktemp -d) || return 1
-  # A RETURN trap outlives the function that set it, so this one clears
-  # itself; otherwise it fires on later returns, after `tmp` is gone.
-  trap 'rm -rf "${tmp}"; trap - RETURN' RETURN
+  tmp=$(mktemp -d) || exit 1
+  trap 'rm -rf "${tmp}"' EXIT
 
-  local pair org var count rc=0 i=0
+  rc=0
+  i=0
   for pair in twistedmelonman:GH_TOKEN_TWM smartwatermelon:GH_TOKEN_SWM nightowlstudiollc:GH_TOKEN_NOS; do
     org="${pair%%:*}"
     var="${pair#*:}"
@@ -1224,25 +1226,13 @@ _gh_my_search() {
     fi
   done
 
-  if [[ "${kind}" == "prs" ]]; then
-    ((i += 1))
-    if ! gh search prs --author=@me --state=open --archived=false \
-      --limit="${limit}" --json "${fields}" "${passthru[@]}" >"${tmp}/${i}.json"; then
-      echo "[my-prs] ERROR: search for PRs authored by @me failed; results are incomplete." >&2
-      echo '[]' >"${tmp}/${i}.json"
-      rc=1
-    fi
-  fi
-
-  local merged
-  merged=$(jq -s 'add | unique_by(.url) | sort_by(.updatedAt) | reverse' "${tmp}"/*.json) || return 1
+  merged=$(jq -s 'add | unique_by(.url) | sort_by(.updatedAt) | reverse' "${tmp}"/*.json) || exit 1
 
   if [[ "${mode}" == "json" ]]; then
     printf '%s\n' "${merged}"
-    return "${rc}"
+    exit "${rc}"
   fi
 
-  local table
   table=$(jq -r --arg kind "${kind}" '
     def pad($w): . + (" " * ([$w - length, 0] | max));
     "\(length) open \($kind) in \(map(.repository.nameWithOwner) | unique | length) repos",
@@ -1257,17 +1247,16 @@ _gh_my_search() {
             + (if (.labels | length) > 0
                 then "  [" + (.labels | map(.name) | join(", ")) + "]"
                 else "" end)))
-  ' <<<"${merged}") || return 1
+  ' <<<"${merged}") || exit 1
 
   if [[ -t 1 ]]; then
-    local -a pager
     read -r -a pager <<<"${PAGER:-less -FRX}"
     printf '%s\n' "${table}" | "${pager[@]}"
   else
     printf '%s\n' "${table}"
   fi
-  return "${rc}"
-}
+  exit "${rc}"
+)
 
 my_prs() { _gh_my_search prs "$@"; }
 my_issues() { _gh_my_search issues "$@"; }

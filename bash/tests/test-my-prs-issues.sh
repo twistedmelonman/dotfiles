@@ -10,7 +10,8 @@
 #   2. Each org's search runs with GH_TOKEN_<ORG> when it is set, and with the
 #      caller's own GH_TOKEN (or none) when it is not. A single shared token
 #      cannot see private repos in every org, which is why the split exists.
-#   3. my_prs adds one --author=@me search; results are de-duplicated by URL.
+#   3. my_prs searches the same three orgs, and nothing else: an owner-less
+#      search would take its gh identity from the current directory.
 #   4. Output is sorted newest-updated first; --json emits a JSON array and
 #      --text a table. Extra arguments reach gh unchanged.
 #   5. A failed org search is reported on stderr and makes the call return
@@ -54,14 +55,13 @@ LOG="${WORK}/gh.log"
 FAIL_OWNER=""
 
 # Fake gh: one log line per call ("token|args"), then fixture JSON keyed on
-# --owner (or on --author=@me for my_prs's extra search).
+# --owner.
 gh() {
   printf '%s|%s\n' "${GH_TOKEN:-<unset>}" "$*" >>"${LOG}"
   local arg owner=""
   for arg in "$@"; do
     case "${arg}" in
       --owner=*) owner="${arg#--owner=}" ;;
-      --author=@me) owner="@me" ;;
     esac
   done
   if [[ -n "${FAIL_OWNER}" && "${owner}" == "${FAIL_OWNER}" ]]; then
@@ -77,10 +77,6 @@ gh() {
       ;;
     nightowlstudiollc)
       echo '[{"repository":{"nameWithOwner":"nightowlstudiollc/c"},"number":3,"title":"middle","author":{"login":"z"},"labels":[],"updatedAt":"2026-02-01T00:00:00Z","url":"u3","isDraft":false}]'
-      ;;
-    @me)
-      # u1 duplicates an org result; u9 is an off-org PR.
-      echo '[{"repository":{"nameWithOwner":"twistedmelonman/a"},"number":1,"title":"old","author":{"login":"x"},"labels":[],"updatedAt":"2026-01-01T00:00:00Z","url":"u1","isDraft":false},{"repository":{"nameWithOwner":"other/d"},"number":9,"title":"offorg","author":{"login":"x"},"labels":[],"updatedAt":"2025-12-01T00:00:00Z","url":"u9","isDraft":false}]'
       ;;
     *) echo '[]' ;;
   esac
@@ -116,13 +112,19 @@ check "all calls use caller GH_TOKEN" "3" "$(grep -c '^shared|' "${LOG}")"
 )
 check "no GH_TOKEN at all -> none set (keyring)" "3" "$(grep -c '^<unset>|' "${LOG}")"
 
-echo "Test 3: my_prs adds an @me search and de-duplicates"
+echo "Test 3: my_prs searches only the three orgs"
 : >"${LOG}"
 out="$(my_prs --json)"
-check "four gh calls" "4" "$(wc -l <"${LOG}" | tr -d ' ')"
-check "one --author=@me call" "1" "$(grep -c -- 'search prs --author=@me' "${LOG}")"
-check "duplicate removed, off-org kept, sorted" "u2 u3 u1 u9" "$(jq -r 'map(.url) | join(" ")' <<<"${out}")"
-check "isDraft requested for PRs" "4" "$(grep -c -- ',isDraft' "${LOG}")"
+check "three gh calls, all search prs --owner" "3" "$(grep -c -- '|search prs --owner=' "${LOG}")"
+check "no owner-less search" "3" "$(wc -l <"${LOG}" | tr -d ' ')"
+check "sorted newest first" "u2 u3 u1" "$(jq -r 'map(.url) | join(" ")' <<<"${out}")"
+check "isDraft requested for PRs" "3" "$(grep -c -- ',isDraft' "${LOG}")"
+check "no trap left in the caller" "" "$(trap -p RETURN EXIT | grep -v "rm -rf \"\${WORK}\"" || true)"
+# The body is a subshell, so none of its variables reach the caller. Called
+# in this shell (not in $(...)) so a leak would be visible here.
+unset rc merged
+my_prs --json >/dev/null
+check "no variables leak to the caller" "unset unset" "${rc-unset} ${merged-unset}"
 
 echo "Test 4: passthrough arguments and text output"
 : >"${LOG}"
@@ -146,6 +148,11 @@ FAIL_OWNER=""
 check "non-zero exit" "1" "${rc}"
 check "error names the org" "1" "$(grep -c 'search failed for smartwatermelon' "${WORK}/err")"
 check "other orgs still returned" "u3 u1" "$(jq -r 'map(.url) | join(" ")' <<<"${out}")"
+FAIL_OWNER=smartwatermelon
+rc=0
+my_issues --text >/dev/null 2>&1 || rc=$?
+FAIL_OWNER=""
+check "non-zero exit in --text mode too" "1" "${rc}"
 
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
