@@ -57,19 +57,30 @@ _gh_wrapper_review_script_path() {
 # _gh_wrapper_force_draft_for_off_org (draft enforcement) so the two checks
 # can never drift on what "owner" means for a given invocation — prints the
 # resolved owner (raw case) on stdout, or nothing if it can't be resolved.
+#
+# `--owner X` (gh search, gh project, ...) names the owner too, and sits
+# between the two: -R still wins, but a single --owner beats cwd, so
+# `gh search issues --owner=nightowlstudiollc` resolves the same from a Beacon
+# checkout as from anywhere else. A comma-separated owner list could span both
+# identities, so it is ignored and cwd decides, as before.
 _gh_wrapper_resolve_owner() {
-  local repo_flag_value skip_next=0 arg remote_url owner
+  local repo_flag_value owner_flag_value skip_next="" arg remote_url owner
 
   repo_flag_value=""
+  owner_flag_value=""
   for arg in "$@"; do
     [[ "${arg}" == "--" ]] && break
-    if [[ "${skip_next}" == "1" ]]; then
+    if [[ "${skip_next}" == "repo" ]]; then
       repo_flag_value="${arg}"
-      skip_next=0
       break
     fi
+    if [[ "${skip_next}" == "owner" ]]; then
+      owner_flag_value="${arg}"
+      skip_next=""
+      continue
+    fi
     case "${arg}" in
-      -R | --repo) skip_next=1 ;;
+      -R | --repo) skip_next="repo" ;;
       --repo=*)
         repo_flag_value="${arg#--repo=}"
         break
@@ -78,9 +89,16 @@ _gh_wrapper_resolve_owner() {
         repo_flag_value="${arg#-R}"
         break
         ;;
+      --owner) skip_next="owner" ;;
+      --owner=*) owner_flag_value="${arg#--owner=}" ;;
       *) ;;
     esac
   done
+
+  if [[ -z "${repo_flag_value}" && -n "${owner_flag_value}" && "${owner_flag_value}" != *,* ]]; then
+    printf '%s\n' "${owner_flag_value}"
+    return 0
+  fi
 
   if [[ -n "${repo_flag_value}" ]]; then
     # -R/--repo takes OWNER/REPO or a full URL; owner is always the first

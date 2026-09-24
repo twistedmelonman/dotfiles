@@ -32,7 +32,8 @@ alias gs='git status'
 alias gl='git log --oneline'
 alias gp='git pull'
 alias gc='git commit -m'
-alias my-prs='gh search prs --author "@me" --state open'
+alias my-prs='my_prs'       # open PRs across my orgs (functions.sh)
+alias my-issues='my_issues' # open issues across my orgs (functions.sh)
 
 # Exciting ways of launching Claude Code
 if [[ -f "${HOME}/.local/bin/claude-wrapper" ]]; then

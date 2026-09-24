@@ -1155,3 +1155,108 @@ opp() {
   )
 }
 export -f opp # Exported - available inside CCCLI sessions
+
+# ============================================================================
+# Open PRs and issues across my GitHub orgs
+# ============================================================================
+# my_prs / my_issues (aliased as my-prs / my-issues) list every open PR or
+# issue in unarchived repos of twistedmelonman, smartwatermelon and
+# nightowlstudiollc, whoever wrote it.
+#
+# Output is a paged table on a terminal and JSON when piped; --text or --json
+# forces one. Any other argument passes through to `gh search`, e.g.
+# `my-issues --label bug`.
+#
+# Each org is searched on its own, with GH_TOKEN_<ORG> when that is set
+# (claude-wrapper sets all three) and with the current gh auth otherwise (the
+# keyring, in an interactive shell). The shared CCCLI GH_TOKEN cannot see
+# private repos in smartwatermelon or nightowlstudiollc, so a session holding
+# only that token undercounts. The gh wrapper picks the identity from the
+# single --owner, so the result does not depend on the current directory.
+#
+# Issues and PRs are separate searches rather than `gh search issues
+# --include-prs`: across several owners with --archived=false, GitHub answers
+# that with HTTP 422 ("Query must include 'is:issue' or 'is:pull-request'").
+#
+# The body is a subshell so the temp dir can be cleaned up by an EXIT trap,
+# which an interrupt cannot leave behind the way it can a RETURN trap.
+
+_gh_my_search() (
+  kind="$1" # issues | prs
+  shift
+  mode=""
+  limit=1000
+  passthru=()
+  for arg in "$@"; do
+    case "${arg}" in
+      --json) mode=json ;;
+      --text) mode=text ;;
+      *) passthru+=("${arg}") ;;
+    esac
+  done
+  if [[ -z "${mode}" ]]; then
+    if [[ -t 1 ]]; then mode=text; else mode=json; fi
+  fi
+
+  fields="repository,number,title,author,labels,updatedAt,url"
+  [[ "${kind}" == "prs" ]] && fields+=",isDraft"
+
+  tmp=$(mktemp -d) || exit 1
+  trap 'rm -rf "${tmp}"' EXIT
+
+  rc=0
+  i=0
+  for pair in twistedmelonman:GH_TOKEN_TWM smartwatermelon:GH_TOKEN_SWM nightowlstudiollc:GH_TOKEN_NOS; do
+    org="${pair%%:*}"
+    var="${pair#*:}"
+    ((i += 1))
+    if ! (
+      if [[ -n "${!var:-}" ]]; then export GH_TOKEN="${!var}"; fi
+      gh search "${kind}" --owner="${org}" --state=open --archived=false \
+        --limit="${limit}" --json "${fields}" "${passthru[@]}"
+    ) >"${tmp}/${i}.json"; then
+      echo "[my-${kind}] ERROR: search failed for ${org}; results are incomplete." >&2
+      echo '[]' >"${tmp}/${i}.json"
+      rc=1
+      continue
+    fi
+    count=$(jq length "${tmp}/${i}.json")
+    if [[ "${count}" -ge "${limit}" ]]; then
+      echo "[my-${kind}] WARNING: ${org} hit the ${limit}-result cap; results are truncated." >&2
+    fi
+  done
+
+  merged=$(jq -s 'add | unique_by(.url) | sort_by(.updatedAt) | reverse' "${tmp}"/*.json) || exit 1
+
+  if [[ "${mode}" == "json" ]]; then
+    printf '%s\n' "${merged}"
+    exit "${rc}"
+  fi
+
+  table=$(jq -r --arg kind "${kind}" '
+    def pad($w): . + (" " * ([$w - length, 0] | max));
+    "\(length) open \($kind) in \(map(.repository.nameWithOwner) | unique | length) repos",
+    (group_by(.repository.nameWithOwner)[]
+      | "", "\(.[0].repository.nameWithOwner) (\(length))",
+        (sort_by(.updatedAt) | reverse[]
+          | "  " + ("#\(.number)" | pad(6)) + " " + .updatedAt[0:10] + "  "
+            + (if $kind == "prs"
+                then (if .isDraft then "draft " else "" end) + "@\(.author.login)  "
+                else "" end)
+            + .title
+            + (if (.labels | length) > 0
+                then "  [" + (.labels | map(.name) | join(", ")) + "]"
+                else "" end)))
+  ' <<<"${merged}") || exit 1
+
+  if [[ -t 1 ]]; then
+    read -r -a pager <<<"${PAGER:-less -FRX}"
+    printf '%s\n' "${table}" | "${pager[@]}"
+  else
+    printf '%s\n' "${table}"
+  fi
+  exit "${rc}"
+)
+
+my_prs() { _gh_my_search prs "$@"; }
+my_issues() { _gh_my_search issues "$@"; }
