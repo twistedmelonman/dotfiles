@@ -16,6 +16,14 @@
 #      --text a table. Extra arguments reach gh unchanged.
 #   5. A failed org search is reported on stderr and makes the call return
 #      non-zero, while the other orgs' results are still printed.
+#   6. On a work machine (${BEACON_WORKDIR} exists) there is one search:
+#      --involves=@me, no --owner, run with andrewmrich's keyring token from a
+#      directory other than the caller's, so the gh wrapper cannot take the
+#      identity from the caller's checkout. No personal-org search runs.
+#
+# Tests 1-5 are personal-machine tests, so BEACON_WORKDIR points at a path
+# that does not exist. Without that they would silently run in work mode on
+# the work machine.
 #
 # gh is replaced by a shell function that logs its token and argv and prints
 # fixture JSON, so nothing here touches the network.
@@ -51,17 +59,27 @@ if [[ -z "${_fn_src}" ]]; then
 fi
 eval "${_fn_src}"
 
+export BEACON_WORKDIR="${WORK}/no-such-beacon-dir"
+
 LOG="${WORK}/gh.log"
 FAIL_OWNER=""
+NO_WORK_LOGIN=""
 
-# Fake gh: one log line per call ("token|args"), then fixture JSON keyed on
-# --owner.
+# Fake gh: one log line per call ("token|args|cwd"), then fixture JSON keyed
+# on --owner, or on --involves when there is no --owner. `auth token --user
+# andrewmrich` prints a fake keyring token unless NO_WORK_LOGIN is set.
 gh() {
-  printf '%s|%s\n' "${GH_TOKEN:-<unset>}" "$*" >>"${LOG}"
+  printf '%s|%s|%s\n' "${GH_TOKEN:-<unset>}" "$*" "${PWD}" >>"${LOG}"
+  if [[ "$1 $2" == "auth token" ]]; then
+    [[ -z "${NO_WORK_LOGIN}" && "$*" == "auth token --user andrewmrich" ]] || return 1
+    echo "work-keyring"
+    return 0
+  fi
   local arg owner=""
   for arg in "$@"; do
     case "${arg}" in
       --owner=*) owner="${arg#--owner=}" ;;
+      --involves=@me) [[ -n "${owner}" ]] || owner="@involves" ;;
     esac
   done
   if [[ -n "${FAIL_OWNER}" && "${owner}" == "${FAIL_OWNER}" ]]; then
@@ -77,6 +95,9 @@ gh() {
       ;;
     nightowlstudiollc)
       echo '[{"repository":{"nameWithOwner":"nightowlstudiollc/c"},"number":3,"title":"middle","author":{"login":"z"},"labels":[],"updatedAt":"2026-02-01T00:00:00Z","url":"u3","isDraft":false}]'
+      ;;
+    @involves)
+      echo '[{"repository":{"nameWithOwner":"beacon-biosignals/w"},"number":7,"title":"work-old","author":{"login":"andrewmrich"},"labels":[],"updatedAt":"2026-04-01T00:00:00Z","url":"w1","isDraft":false},{"repository":{"nameWithOwner":"andrewmrich/p"},"number":8,"title":"work-new","author":{"login":"andrewmrich"},"labels":[],"updatedAt":"2026-05-01T00:00:00Z","url":"w2","isDraft":false}]'
       ;;
     *) echo '[]' ;;
   esac
@@ -129,7 +150,7 @@ check "no variables leak to the caller" "unset unset" "${rc-unset} ${merged-unse
 echo "Test 4: passthrough arguments and text output"
 : >"${LOG}"
 out="$(my_issues --text --label bug)"
-check "--label reaches gh" "3" "$(grep -c -- '--label bug$' "${LOG}")"
+check "--label reaches gh" "3" "$(grep -c -- '--label bug|' "${LOG}")"
 check "--text not passed to gh" "0" "$(grep -c -- '--text' "${LOG}" || true)"
 check "summary line" "3 open issues in 3 repos" "$(head -1 <<<"${out}")"
 check "row shows number, date, title, labels" "1" \
@@ -153,6 +174,40 @@ rc=0
 my_issues --text >/dev/null 2>&1 || rc=$?
 FAIL_OWNER=""
 check "non-zero exit in --text mode too" "1" "${rc}"
+
+echo "Test 6: work machine -> one --involves=@me search as andrewmrich"
+mkdir -p "${WORK}/beacon" "${WORK}/caller"
+: >"${LOG}"
+out="$(
+  cd "${WORK}/caller"
+  BEACON_WORKDIR="${WORK}/beacon" GH_TOKEN=shared GH_TOKEN_TWM=t1 GH_TOKEN_SWM=t2 GH_TOKEN_NOS=t3 \
+    my_issues --json
+)"
+check "one search call" "1" "$(grep -c '|search ' "${LOG}")"
+check "search uses the andrewmrich keyring token" "1" \
+  "$(grep -c '^work-keyring|search issues --involves=@me --state=open --archived=false ' "${LOG}")"
+check "no --owner" "0" "$(grep -c -- '--owner' "${LOG}" || true)"
+check "token read with GH_TOKEN unset" "1" "$(grep -c '^<unset>|auth token --user andrewmrich|' "${LOG}")"
+check "search not run from the caller's cwd" "0" "$(grep -c "^[^|]*|search .*|${WORK}/caller\$" "${LOG}" || true)"
+check "sorted newest first" "w2 w1" "$(jq -r 'map(.url) | join(" ")' <<<"${out}")"
+: >"${LOG}"
+out="$(BEACON_WORKDIR="${WORK}/beacon" my_prs --text --label bug)"
+check "PRs: involves search with passthrough" "1" \
+  "$(grep -c '^work-keyring|search prs --involves=@me .* --label bug|' "${LOG}")"
+check "PRs: summary line" "2 open prs in 2 repos" "$(head -1 <<<"${out}")"
+# A caller-cwd leak or exported token would show here, in this shell.
+unset GH_TOKEN
+BEACON_WORKDIR="${WORK}/beacon" my_issues --json >/dev/null
+check "caller GH_TOKEN stays unset" "unset" "${GH_TOKEN-unset}"
+check "caller cwd unchanged" "${REPO_ROOT}" "$(pwd -P)"
+: >"${LOG}"
+NO_WORK_LOGIN=1
+rc=0
+out="$(BEACON_WORKDIR="${WORK}/beacon" my_issues --json 2>"${WORK}/err")" || rc=$?
+NO_WORK_LOGIN=""
+check "no andrewmrich login -> non-zero" "1" "${rc}"
+check "no andrewmrich login -> says so" "1" "$(grep -c 'no andrewmrich login' "${WORK}/err")"
+check "no andrewmrich login -> no search" "0" "$(grep -c '|search ' "${LOG}" || true)"
 
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
