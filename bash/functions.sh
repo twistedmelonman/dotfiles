@@ -707,8 +707,17 @@ _claude_update() {
     local plugin_list_json enabled_plugins
     plugin_list_json=$("${claude_bin}" plugin list --json 2>/dev/null)
     if [[ -n "${plugin_list_json}" ]]; then
-      local enabled_plugins_raw
-      enabled_plugins_raw=$(jq -r '.[] | select(.enabled == true) | .id' <<<"${plugin_list_json}" 2>/dev/null)
+      # Plugins synced from the claude.ai account (scope "synced") have no
+      # marketplace behind them, so `plugin update` always fails on them.
+      # Claude Code refreshes them from claude.ai itself; name them and move on.
+      local enabled_plugins_raw synced_plugins_raw synced_plugin
+      enabled_plugins_raw=$(jq -r '.[] | select(.enabled == true and .scope != "synced") | .id' <<<"${plugin_list_json}" 2>/dev/null)
+      synced_plugins_raw=$(jq -r '.[] | select(.enabled == true and .scope == "synced") | .id' <<<"${plugin_list_json}" 2>/dev/null)
+      if [[ -n "${synced_plugins_raw}" ]]; then
+        while IFS= read -r synced_plugin; do
+          _notif "  ${synced_plugin} skipped (synced from claude.ai, refreshed by Claude Code)"
+        done <<<"${synced_plugins_raw}"
+      fi
       enabled_plugins=()
       if [[ -n "${enabled_plugins_raw}" ]]; then
         mapfile -t enabled_plugins <<<"${enabled_plugins_raw}"
