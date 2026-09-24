@@ -100,7 +100,7 @@ gpush() {
   local ignorable_when_skipped=("Dependabot")
   local all_runs=""
   local attempts=0
-  while [[ -z "${all_runs}" && ${attempts} -lt 15 ]]; do
+  while [[ -z "${all_runs}" && ${attempts} -lt 30 ]]; do
     all_runs=$(gh run list --branch "${branch}" --commit "${head_sha}" --json databaseId,name -q '.[] | (.databaseId | tostring) + "\t" + .name' 2>/dev/null || true)
     if [[ -z "${all_runs}" ]]; then
       ((attempts += 1))
@@ -108,7 +108,7 @@ gpush() {
     fi
   done
   if [[ -z "${all_runs}" ]]; then
-    echo -e "${RED}[gpush]${NC} No CI runs found for ${head_sha:0:7} after 30s. Check GitHub Actions." >&2
+    echo -e "${RED}[gpush]${NC} No CI runs found for ${head_sha:0:7} after 60s. Check GitHub Actions." >&2
     return 1
   fi
 
