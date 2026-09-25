@@ -88,6 +88,34 @@ assert_gate "pr review --approve (no body)" 0 pr review 5 --approve
 assert_gate "pr merge (not a text surface)" 0 pr merge 5 --squash
 assert_gate "issue list (not a text surface)" 0 issue list
 assert_gate "pr view (not a text surface)" 0 pr view 5
+assert_gate "pr review --request-changes (no body)" 0 pr review 5 --request-changes
+assert_gate "api GET, no fields" 0 api repos/o/r/pulls/5
+assert_gate "api non-body field" 0 api repos/o/r/issues/5 -X PATCH -f state=closed
+assert_gate "api title field (titles stay ungated)" 0 api repos/o/r/issues -f title=t
+assert_gate "api field whose name only ends in body" 0 api repos/o/r/x -f nobody=1
+assert_gate "api --jq .body reads, does not write" 0 api repos/o/r/issues/5 --jq .body
+assert_gate "api graphql read-only query" 0 api graphql -f query='{ viewer { login } }'
+assert_gate "api graphql query reading comment bodies" 0 \
+  api graphql -f query='{ repository(owner:"o",name:"r") { issue(number:5) { comments(first:5) { nodes { body } } } } }'
+# A --jq or -H value that happens to read like a body field is a value, not a
+# field, and must not be mistaken for one.
+assert_gate "api --jq value that looks like a field" 0 api repos/o/r/issues/5 --jq 'body=x'
+
+# --- pr review and gh api carry prose too (claude-config#548) ------------------
+assert_gate "pr review --comment --body inline" 1 pr review 5 --comment --body "inline"
+assert_gate "pr review -b inline" 1 pr review 5 -b "inline"
+assert_gate "api -f body= inline" 1 api repos/o/r/issues/5/comments -f body=hi
+assert_gate "api --field body= inline" 1 api repos/o/r/issues/5/comments --field body=hi
+assert_gate "api --raw-field body= inline" 1 api repos/o/r/issues/5/comments --raw-field body=hi
+assert_gate "api -F body= typed but inline" 1 api repos/o/r/issues/5/comments -F body=hi
+assert_gate "api attached -fbody= inline" 1 api repos/o/r/issues/5/comments -fbody=hi
+assert_gate "api --field=body= inline" 1 api repos/o/r/issues/5/comments --field=body=hi
+assert_gate "api -F body=@relative" 1 api repos/o/r/issues/5/comments -F body=@body.md
+assert_gate "api -F body=@- (stdin)" 1 api repos/o/r/issues/5/comments -F body=@-
+assert_gate "api --hostname before api, inline body" 1 \
+  --hostname github.com api repos/o/r/issues/5/comments -f body=hi
+assert_gate "api graphql addComment mutation with inline body" 1 \
+  api graphql -f query='mutation { addComment(input: {subjectId: "X", body: "hi"}) { clientMutationId } }'
 
 # --- inline body: unverifiable, always blocked --------------------------------
 # There is nothing on disk to hash, so no approval can exist for it.
@@ -165,6 +193,20 @@ if [[ "${HAVE_GATE}" == "1" ]]; then
   # An approval made under one label satisfies a body used anywhere: `check`
   # matches on content and takes no name.
   assert_gate "approval is label-independent" 0 issue comment 9 --body-file "${BODY}"
+
+  # --- pr review and gh api file forms (claude-config#548) --------------------
+  assert_gate "pr review --body-file approved" 0 pr review 5 --request-changes --body-file "${BODY}"
+  assert_gate "pr review -F approved" 0 pr review 5 --comment -F "${BODY}"
+  assert_gate "pr review --body-file unapproved" 1 pr review 5 --comment --body-file "${UNAPPROVED}"
+  assert_gate "api -F body=@abs approved" 0 api repos/o/r/issues/5/comments -F "body=@${BODY}"
+  assert_gate "api --field body=@abs approved" 0 api repos/o/r/issues/5/comments --field "body=@${BODY}"
+  assert_gate "api --field=body=@abs approved" 0 api repos/o/r/issues/5/comments "--field=body=@${BODY}"
+  assert_gate "api attached -Fbody=@abs approved" 0 api repos/o/r/issues/5/comments "-Fbody=@${BODY}"
+  assert_gate "api -F body=@abs unapproved" 1 api repos/o/r/issues/5/comments -F "body=@${UNAPPROVED}"
+  # -f/--raw-field never expands @: this posts the literal path string.
+  assert_gate "api -f body=@abs is raw, inline" 1 api repos/o/r/issues/5/comments -f "body=@${BODY}"
+  assert_gate "api approved body plus a second inline body" 1 \
+    api repos/o/r/issues/5/comments -F "body=@${BODY}" -f body=x
 else
   echo "SKIP: approval cases — gate-review.sh not installed at ${REAL_GATE}"
 fi
@@ -183,6 +225,10 @@ if [[ "${HAVE_GATE}" == "1" ]] && grep -q '_cmd_suspended' "${GATE}"; then
     pr create --title t --body-file "${UNAPPROVED}"
   assert_gate "suspended through tomorrow: inline body allowed" 0 \
     pr create --title t --body "inline text"
+  assert_gate "suspended through tomorrow: inline review body allowed" 0 \
+    pr review 5 --comment --body "inline text"
+  assert_gate "suspended through tomorrow: inline api body allowed" 0 \
+    api repos/o/r/issues/5/comments -f body=hi
   notice="$(_gh_wrapper_approval_gate pr create --title t --body-file "${UNAPPROVED}" 2>&1 >/dev/null)" || true
   if [[ "${notice}" == *"[personify-gate] SUSPENDED until"* ]]; then
     echo "PASS: suspension prints its notice"
@@ -205,6 +251,10 @@ if [[ "${HAVE_GATE}" == "1" ]] && grep -q '_cmd_suspended' "${GATE}"; then
   rm -f "${SUSP}"
   assert_gate "no SUSPENDED file: unapproved body blocked (control)" 1 \
     pr create --title t --body-file "${UNAPPROVED}"
+  assert_gate "no SUSPENDED file: inline review body blocked (control)" 1 \
+    pr review 5 --comment --body "inline text"
+  assert_gate "no SUSPENDED file: inline api body blocked (control)" 1 \
+    api repos/o/r/issues/5/comments -f body=hi
 else
   echo "SKIP: suspension cases — ${REAL_GATE} has no 'suspended' subcommand"
 fi

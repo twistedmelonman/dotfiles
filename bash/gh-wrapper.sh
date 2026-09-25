@@ -593,6 +593,71 @@ _gh_wrapper_force_draft_for_off_org() {
   return 0
 }
 
+# --- approval gate: gh api fields ----------------------------------------------
+# Classify the fields of a `gh api` call for _gh_wrapper_approval_gate. Sets
+# that function's locals `inline` and `files` (bash scoping is dynamic, so a
+# callee sees its caller's locals); it is not meant to be called on its own.
+#
+# The one verifiable form is `-F/--field body=@<path>`: that makes gh read the
+# value from the file, so the file's bytes are what gets posted. `-f` and
+# `--raw-field` never expand `@`, so `-f body=@/x` posts the literal string and
+# counts as inline. A GraphQL `query` that is a mutation setting a `body:`
+# argument carries its text inline too. Fields not named body -- state, labels,
+# titles -- are not prose and pass.
+#
+# NOT covered: `--input <json>`, which carries a body inside a JSON document.
+# Blocking it outright would also block ruleset and protection writes that
+# carry no prose. Same limit as hook-block-personify.sh.
+_gh_wrapper_api_body_fields() {
+  local arg flag="" field key val skip_next=0
+  local gql_body_re='mutation.*[^[:alnum:]_]body[[:space:]]*:'
+  for arg in "$@"; do
+    [[ "${arg}" == "--" ]] && break
+    if [[ "${skip_next}" == "1" ]]; then
+      skip_next=0
+      continue
+    fi
+    field=""
+    if [[ -n "${flag}" ]]; then
+      field="${arg}"
+    else
+      case "${arg}" in
+        -X | --method | -H | --header | -q | --jq | -t | --template | --input | --cache | -p | --preview | --hostname)
+          skip_next=1
+          ;;
+        -f | -F | --field | --raw-field)
+          flag="${arg}"
+          continue
+          ;;
+        --field=* | --raw-field=*)
+          flag="${arg%%=*}"
+          field="${arg#*=}"
+          ;;
+        -f?* | -F?*)
+          flag="${arg:0:2}"
+          field="${arg:2}"
+          ;;
+        *) ;;
+      esac
+    fi
+    if [[ -n "${field}" ]]; then
+      key="${field%%=*}"
+      val="${field#*=}"
+      if [[ "${field}" == *=* && "${key}" == "body" ]]; then
+        if [[ ("${flag}" == "-F" || "${flag}" == "--field") && "${val}" == @* ]]; then
+          files+=("${val#@}")
+        else
+          inline=1
+        fi
+      elif [[ "${key}" == "query" && "${val}" =~ ${gql_body_re} ]]; then
+        inline=1
+      fi
+    fi
+    flag=""
+  done
+  return 0
+}
+
 # --- approval gate -------------------------------------------------------------
 # Refuse to write PR or issue body text unless Andrew has visually approved
 # those exact bytes. Approval lives on disk in gate-review's approved/
@@ -622,6 +687,10 @@ _gh_wrapper_force_draft_for_off_org() {
 # A redundant pair whose halves disagree about the unverifiable case is not
 # redundant. A machine without claude-config installed cannot write PR bodies
 # through this wrapper; that is the intended outcome, not an oversight.
+#
+# `gh pr review` follows the same body rule as `gh pr edit`. `gh api` is gated
+# when it sends a field named `body` or a GraphQL mutation with a body argument
+# (claude-config#548); see _gh_wrapper_api_body_fields.
 #
 # Same arg walk as _gh_wrapper_force_draft_for_off_org so detection cannot drift.
 _gh_wrapper_approval_gate() {
@@ -659,13 +728,22 @@ _gh_wrapper_approval_gate() {
     esac
   done
 
+  local -a files=()
   case "${sub}/${subsub}" in
-    pr/create | pr/comment | pr/edit | issue/create | issue/comment | issue/edit) ;;
+    pr/create | pr/comment | pr/edit | pr/review | issue/create | issue/comment | issue/edit)
+      [[ -n "${body_file}" ]] && files=("${body_file}")
+      ;;
+    api/*)
+      # -F means --field here, not --body-file: discard the generic walk's
+      # reading and classify the fields instead.
+      inline=0
+      _gh_wrapper_api_body_fields "$@"
+      ;;
     *) return 0 ;;
   esac
 
   # No body flag at all: no prose is being written. Titles and labels pass.
-  if [[ "${inline}" == "0" && -z "${body_file}" ]]; then
+  if [[ "${inline}" == "0" && "${#files[@]}" == "0" ]]; then
     return 0
   fi
 
@@ -689,17 +767,27 @@ _gh_wrapper_approval_gate() {
 
   if [[ "${inline}" == "1" ]]; then
     reason="text given inline; only a file can be verified"
-  elif [[ "${body_file}" != /* ]]; then
-    reason="path '${body_file}' is not absolute; gh and this gate would resolve it differently"
-  elif [[ ! -f "${body_file}" ]]; then
-    reason="no such file: ${body_file}"
-  elif [[ ! -x "${gate}" ]]; then
-    reason="gate-review.sh missing at ${gate}; cannot verify"
-  elif ! "${gate}" check "${body_file}"; then
-    reason="the bytes in ${body_file} do not match anything approved"
   else
-    return 0
+    # Every named file must verify: an approved first body must not carry an
+    # unapproved second one through.
+    for body_file in "${files[@]}"; do
+      if [[ "${body_file}" != /* ]]; then
+        reason="path '${body_file}' is not absolute; gh and this gate would resolve it differently"
+      elif [[ ! -f "${body_file}" ]]; then
+        reason="no such file: ${body_file}"
+      elif [[ ! -x "${gate}" ]]; then
+        reason="gate-review.sh missing at ${gate}; cannot verify"
+      elif ! "${gate}" check "${body_file}"; then
+        reason="the bytes in ${body_file} do not match anything approved"
+      fi
+      [[ -n "${reason}" ]] && break
+    done
+    [[ -n "${reason}" ]] || return 0
   fi
+
+  local rerun="gh ${sub} ${subsub} --title t --body-file ${HOME}/.claude/gate-review/approved/<label>"
+  [[ "${sub}" == "api" ]] \
+    && rerun="gh api ${subsub} -F body=@${HOME}/.claude/gate-review/approved/<label>"
 
   {
     echo "[gh] 🛑 BLOCKED: ${sub} ${subsub} body has not been visually approved."
@@ -714,7 +802,7 @@ _gh_wrapper_approval_gate() {
     echo "[gh]   3. ${gate} open"
     echo "[gh]   4. Andrew reads the batch and types APPROVED in the STATUS line."
     echo "[gh]   5. Re-run against the APPROVED file, absolute path:"
-    echo "[gh]        gh ${sub} ${subsub} --title t --body-file ${HOME}/.claude/gate-review/approved/<label>"
+    echo "[gh]        ${rerun}"
     echo "[gh]"
     echo "[gh]      Use the approved copy, not the file you staged: if he edited"
     echo "[gh]      the text in the editor, his edits are what he approved and"
@@ -1100,6 +1188,6 @@ else
   # its own body into subshells, not functions it calls. Without exporting
   # these too, gh() would break in any subshell that inherits the exported
   # gh but didn't source this file (e.g. BASH_ENV unset/overridden there).
-  export -f gh sugh _gh_wrapper_block_bypass _gh_wrapper_approval_gate _gh_wrapper_maybe_review _gh_wrapper_review_script_path _gh_wrapper_sync_identity _gh_wrapper_find_real_gh _gh_wrapper_resolve_owner _gh_wrapper_force_draft_for_off_org _gh_wrapper_is_beacon_context _gh_wrapper_beacon_dir_is_explicit _gh_wrapper_keyring_login _gh_wrapper_keyring_users _gh_wrapper_resolve_switch_target _gh_wrapper_run_with_scope_hint _gh_wrapper_scope_from_file _gh_wrapper_print_scope_hint _gh_wrapper_redact_argv _gh_wrapper_redact_value
+  export -f gh sugh _gh_wrapper_block_bypass _gh_wrapper_approval_gate _gh_wrapper_api_body_fields _gh_wrapper_maybe_review _gh_wrapper_review_script_path _gh_wrapper_sync_identity _gh_wrapper_find_real_gh _gh_wrapper_resolve_owner _gh_wrapper_force_draft_for_off_org _gh_wrapper_is_beacon_context _gh_wrapper_beacon_dir_is_explicit _gh_wrapper_keyring_login _gh_wrapper_keyring_users _gh_wrapper_resolve_switch_target _gh_wrapper_run_with_scope_hint _gh_wrapper_scope_from_file _gh_wrapper_print_scope_hint _gh_wrapper_redact_argv _gh_wrapper_redact_value
   export _gh_wrapper_review_script GH_WRAPPER_BEACON_DIR _GH_WRAPPER_BEACON_DIR_DEFAULT
 fi
