@@ -20,6 +20,7 @@
 #      --involves=@me, no --owner, run with andrewmrich's keyring token from a
 #      directory other than the caller's, so the gh wrapper cannot take the
 #      identity from the caller's checkout. No personal-org search runs.
+#   7. --help / -h print usage to stdout, exit 0 and run no search.
 #
 # Tests 1-5 are personal-machine tests, so BEACON_WORKDIR points at a path
 # that does not exist. Without that they would silently run in work mode on
@@ -208,6 +209,16 @@ NO_WORK_LOGIN=""
 check "no andrewmrich login -> non-zero" "1" "${rc}"
 check "no andrewmrich login -> says so" "1" "$(grep -c 'no andrewmrich login' "${WORK}/err")"
 check "no andrewmrich login -> no search" "0" "$(grep -c '|search ' "${LOG}" || true)"
+
+echo "Test 7: --help / -h print usage and run no search"
+: >"${LOG}"
+rc=0
+out="$(my_issues --help)" || rc=$?
+check "--help exits 0" "0" "${rc}"
+check "--help usage line" "Usage: my-issues [--text | --json] [GH SEARCH ARGS...]" "$(head -1 <<<"${out}")"
+out="$(my_prs -h --label bug)"
+check "-h usage line names my-prs" "Usage: my-prs [--text | --json] [GH SEARCH ARGS...]" "$(head -1 <<<"${out}")"
+check "no gh calls" "0" "$(wc -l <"${LOG}" | tr -d ' ')"
 
 if [[ "${fail}" -ne 0 ]]; then
   echo "FAILED"
