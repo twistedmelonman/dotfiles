@@ -269,9 +269,11 @@ else
 fi
 
 # --with-equals spelling must redact too; a key=value field keeps its key.
-GH_TOKEN="fixture-token" _run scope api -X POST /x --field="body=${SECRET}"
+# The key is not `body`: a body field is prose, and the approval gate
+# (claude-config#548) would block the call before the scope hint runs.
+GH_TOKEN="fixture-token" _run scope api -X POST /x --field="value=${SECRET}"
 err="$(cat "${WORKDIR}/err")"
-if [[ "${err}" != *"${SECRET}"* && "${err}" == *"--field=body=<redacted>"* ]]; then
+if [[ "${err}" != *"${SECRET}"* && "${err}" == *"--field=value=<redacted>"* ]]; then
   _pass "redaction: --field=key=VALUE keeps the key, redacts the value"
 else
   _fail "redaction: --field=key=VALUE not redacted as expected, got: ${err}"
