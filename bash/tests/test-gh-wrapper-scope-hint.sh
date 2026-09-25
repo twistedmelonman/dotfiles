@@ -217,7 +217,7 @@ else
 fi
 
 # --- Case 3: negative control, non-scope 403 -> no hint -----------------------
-GH_TOKEN="fixture-token" _run plain403 pr list --repo smartwatermelon/dotfiles
+GH_TOKEN="fixture-token" _run plain403 pr list --repo twistedmelonman/dotfiles
 rc=$?
 err="$(cat "${WORKDIR}/err")"
 if [[ "${rc}" -eq 1 && "${err}" == *"Must have admin rights"* && "${err}" != *"[gh]"* ]]; then
@@ -227,7 +227,7 @@ else
 fi
 
 # --- Case 4: negative control, success -> nothing added -----------------------
-GH_TOKEN="fixture-token" _run ok repo view smartwatermelon/dotfiles
+GH_TOKEN="fixture-token" _run ok repo view twistedmelonman/dotfiles
 rc=$?
 out="$(cat "${WORKDIR}/out")"
 err="$(cat "${WORKDIR}/err")"
