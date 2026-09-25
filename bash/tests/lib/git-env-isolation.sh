@@ -41,6 +41,26 @@
 # in one direction only — this function never overwrites them, but a caller that
 # sets them first and isolates second is relying on that, which is a fragile
 # thing to rely on.
+#
+# WHY .git/config NO LONGER HAS THE uchg FLAG (twistedmelonman/dotfiles#304)
+#
+# In early iterations, `.git/config` carried the uchg (immutable) file flag as a
+# tripwire for #239. A contaminating write would fail loudly instead of silently
+# corrupting state. This isolation helper eliminates the mechanism that
+# contamination depended on — it clears GIT_DIR and related variables before
+# the first git call, so even an inherited GIT_DIR from a linked-worktree hook
+# dispatch cannot reach the real repository. The tripwire is no longer needed.
+#
+# Evidence this works: test-git-env-isolation.sh injects an inherited GIT_DIR
+# and runs fixture tests under that condition. The control case proves the
+# injected condition is live (an unguarded write DOES contaminate). The guarded
+# cases prove isolation contains the same write. The final check runs the full
+# test suite under the same injected GIT_DIR and validates that the shared
+# config remains byte-identical throughout.
+#
+# The uchg flag should NOT be re-added reflexively. If it is re-added, it must
+# be a conscious decision to layer defense in depth, not a reflex triggered by
+# finding the flag missing.
 
 # Include guard. The array below is `readonly`, so a second source in the same
 # process would abort with "readonly variable" — fatal under `set -e`. Today

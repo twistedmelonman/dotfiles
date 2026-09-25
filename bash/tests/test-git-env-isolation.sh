@@ -226,6 +226,28 @@ for test_name in "${guarded_tests[@]}"; do
     _pass "${test_name}: core.bare not set to true"
   fi
 
+  # core.hooksPath is the property that the uchg flag on .git/config was
+  # protecting. The incident left core.hooksPath empty in the shared config,
+  # silently disabling commit-time review (#239). This check validates that
+  # the git environment isolation guard prevents that contamination.
+  #
+  # Read directly from the shared config file (not git config, which may apply
+  # global defaults). An empty or missing core.hooksPath in the shared config
+  # is the exact failure mode the tripwire was guarding against.
+  if grep -q '^[[:space:]]*hooksPath[[:space:]]*=' "${probe_root}/.git/config" 2>/dev/null; then
+    # core.hooksPath is set in the common config
+    probe_hooks_value="$(grep '^[[:space:]]*hooksPath[[:space:]]*=' "${probe_root}/.git/config" | cut -d'=' -f2)"
+    if [[ -z "${probe_hooks_value}" ]]; then
+      _fail "${test_name}: core.hooksPath is empty in shared config (the #239 failure mode)"
+    else
+      _pass "${test_name}: core.hooksPath is non-empty in shared config"
+    fi
+  else
+    # core.hooksPath is not set in the common config; fixture repos don't need it
+    # set locally as long as the isolation kept the contamination out
+    _pass "${test_name}: core.hooksPath not set in shared config (no contamination)"
+  fi
+
   if "${GIT}" -C "${probe_root}" remote 2>/dev/null | grep -qx upstream; then
     _fail "${test_name}: added an 'upstream' remote to the fixture repo"
   else
