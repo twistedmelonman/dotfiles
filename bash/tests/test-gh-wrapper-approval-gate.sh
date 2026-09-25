@@ -116,6 +116,16 @@ assert_gate "api --hostname before api, inline body" 1 \
   --hostname github.com api repos/o/r/issues/5/comments -f body=hi
 assert_gate "api graphql addComment mutation with inline body" 1 \
   api graphql -f query='mutation { addComment(input: {subjectId: "X", body: "hi"}) { clientMutationId } }'
+# The usual layout puts the query across lines. One argv string still holds
+# all of it, so the match must cross the newlines.
+assert_gate "api graphql mutation spread across lines" 1 \
+  api graphql -f query='
+mutation {
+  addComment(input: {
+    subjectId: "X"
+    body: "hi"
+  }) { clientMutationId }
+}'
 
 # --- inline body: unverifiable, always blocked --------------------------------
 # There is nothing on disk to hash, so no approval can exist for it.
