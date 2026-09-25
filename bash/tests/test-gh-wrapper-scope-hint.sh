@@ -40,6 +40,10 @@ YAML
 # caller's environment would change what the hint says. Clear all three so each
 # case below controls them explicitly.
 unset GH_TOKEN GH_HOST GITHUB_TOKEN
+# A per-owner token would be selected in place of the fixture token for the
+# smartwatermelon cases (smartwatermelon/claude-wrapper#126) and handed to the
+# stubs. Clear them so only fixture values ever reach a stub.
+unset GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM
 # The wrapper's F3 guard resolves GH_TOKEN's login through `gh api user` when
 # this is unset; that would hit the stub and fail. Pin it so no case here
 # depends on identity resolution — the scope hint is the thing under test.
