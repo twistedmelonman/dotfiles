@@ -181,7 +181,16 @@ repos:
     hooks:
       - id: prettier
         name: "Prettier Formatter (JS/TS/JSON/CSS)"
-        entry: bash -c 'npx prettier --write --ignore-unknown "$@"' --
+        # lint-prettier.sh is deployed to ~/.config/git/hooks by symlink
+        # repair (install.sh), which does not run on its own — a machine
+        # that has pulled this dotfiles change but not yet re-run install
+        # (or repaired symlinks) would otherwise hit "No such file" on
+        # every commit. Fall back to the pre-fix behavior until the
+        # symlink exists.
+        entry: >-
+          bash -c 'h="$HOME/.config/git/hooks/lint-prettier.sh"; if [ -x
+          "$h" ]; then exec "$h" "$@"; fi; exec npx prettier --write
+          --ignore-unknown "$@"' --
         language: system
         files: \.(js|jsx|ts|tsx|json|css)$
         pass_filenames: true
