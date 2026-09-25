@@ -156,12 +156,12 @@ at `/bin/bash`. See `bash/README.md` for the conventions for adding a test.
 
 ```bash
 # Fresh machine (no ~/.config yet):
-git clone git@github.com:smartwatermelon/dotfiles.git ~/Developer/dotfiles
+git clone git@github.com:twistedmelonman/dotfiles.git ~/Developer/dotfiles
 
 # Existing machine (~/.config already has other tool configs):
 cd ~/.config
 git init
-git remote add origin git@github.com:smartwatermelon/dotfiles.git
+git remote add origin git@github.com:twistedmelonman/dotfiles.git
 git fetch origin
 git checkout -b main origin/main
 

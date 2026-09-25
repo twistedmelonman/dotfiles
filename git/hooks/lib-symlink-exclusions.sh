@@ -32,6 +32,13 @@
 # Files in the repo that should NOT be symlinked to ~/.config
 _symlink_is_excluded() {
   case "$1" in
+    # Deployed project templates. These files are copied by post-checkout
+    # into every project's scaffolded .claude/, so they are deployed content,
+    # not docs about THIS repo — checked ahead of the generic README.md/
+    # CLAUDE.md repo-doc rules below, which would otherwise swallow them
+    # silently (dotfiles#356: */README.md matched
+    # git/template/.claude-template/README.md, so it never deployed).
+    git/template/*) return 1 ;;
     # CI / GitHub metadata
     .github/*) return 0 ;;
     # Git ignore files (repo-level, not app configs)
