@@ -217,6 +217,27 @@ for pattern in "${nested_must_include[@]}"; do
 done
 ((nested_overreach == 0)) && _pass "paths merely containing 'test' are still symlinked"
 
+# --- Case 8: deployed template files are not repo-doc README/CLAUDE.md ---
+# git/template/.claude-template/README.md is a file this repo DEPLOYS (via
+# post-checkout's `cp -r`) into every project's scaffolded .claude/ dir. It is
+# not a doc ABOUT this repo, so the generic `*/README.md` / `*/CLAUDE.md`
+# repo-doc rules must not swallow it (dotfiles#356). install.sh and
+# lib-symlink-repair.sh both gate on this same function, so a fix here fixes
+# both consumers.
+echo "Case: deployed template files are not excluded as repo docs"
+template_missing=0
+template_must_include=(
+  "git/template/.claude-template/README.md"
+  "git/template/.claude-template/config.sh.template"
+)
+for pattern in "${template_must_include[@]}"; do
+  if _symlink_is_excluded "${pattern}"; then
+    _fail "template file '${pattern}' is wrongly excluded — it will never deploy"
+    template_missing=1
+  fi
+done
+((template_missing == 0)) && _pass "template files under git/template/ are still symlinked"
+
 echo ""
 if ((fail != 0)); then
   echo "test-symlink-exclusions-shared: SOME CHECKS FAILED" >&2
