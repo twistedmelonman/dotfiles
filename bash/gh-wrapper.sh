@@ -672,6 +672,21 @@ _gh_wrapper_approval_gate() {
   local gate="${HOME}/.claude/scripts/gate-review.sh"
   local reason=""
 
+  # Time-boxed suspension: Andrew writes ~/.claude/gate-review/SUSPENDED by
+  # hand, holding the last day it applies. gate-review.sh owns the parsing and
+  # prints a notice when it lets a body through, so this layer and
+  # hook-block-personify.sh cannot disagree about what counts. A missing
+  # gate-review.sh is not a suspension; it falls through and blocks below. So
+  # does a gate-review.sh from before `suspended` existed: it rejects the
+  # unknown subcommand with exit 1, which reads as "not suspended". Its stderr
+  # is shown only on success, so that older version's usage error does not
+  # print on every gated call.
+  local notice=""
+  if [[ -x "${gate}" ]] && notice="$("${gate}" suspended 2>&1 >/dev/null)"; then
+    [[ -n "${notice}" ]] && printf '%s\n' "${notice}" >&2
+    return 0
+  fi
+
   if [[ "${inline}" == "1" ]]; then
     reason="text given inline; only a file can be verified"
   elif [[ "${body_file}" != /* ]]; then

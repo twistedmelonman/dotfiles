@@ -34,7 +34,9 @@ fail=0
 # must not create an approval the live gate would honour.
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
-REAL_GATE="${HOME}/.claude/scripts/gate-review.sh"
+# GATE_REVIEW_SH points the suite at a gate-review.sh other than the installed
+# one, e.g. a claude-config worktree carrying a change not yet installed.
+REAL_GATE="${GATE_REVIEW_SH:-${HOME}/.claude/scripts/gate-review.sh}"
 export HOME="${SANDBOX}"
 mkdir -p "${SANDBOX}/.claude/scripts"
 
@@ -167,6 +169,46 @@ else
   echo "SKIP: approval cases — gate-review.sh not installed at ${REAL_GATE}"
 fi
 
+# --- time-boxed suspension ----------------------------------------------------
+# SUSPENDED holds the last local day the gate is off. gate-review.sh does the
+# parsing (its own suite covers the malformed inputs); these cases prove the
+# wrapper honours the answer in both directions.
+SUSP="${GATE_REVIEW_DIR}/SUSPENDED"
+_day() {
+  date -v"$1"d +%F 2>/dev/null || date -d "$1 days" +%F
+}
+if [[ "${HAVE_GATE}" == "1" ]] && grep -q '_cmd_suspended' "${GATE}"; then
+  printf '%s\n' "$(_day +1)" >"${SUSP}"
+  assert_gate "suspended through tomorrow: unapproved body allowed" 0 \
+    pr create --title t --body-file "${UNAPPROVED}"
+  assert_gate "suspended through tomorrow: inline body allowed" 0 \
+    pr create --title t --body "inline text"
+  notice="$(_gh_wrapper_approval_gate pr create --title t --body-file "${UNAPPROVED}" 2>&1 >/dev/null)" || true
+  if [[ "${notice}" == *"[personify-gate] SUSPENDED until"* ]]; then
+    echo "PASS: suspension prints its notice"
+  else
+    echo "FAIL: suspension prints its notice — got: ${notice}"
+    fail=1
+  fi
+  printf '%s\n' "$(date +%F)" >"${SUSP}"
+  assert_gate "suspended through today: unapproved body allowed" 0 \
+    pr create --title t --body-file "${UNAPPROVED}"
+  printf '%s\n' "$(_day -1)" >"${SUSP}"
+  assert_gate "expired yesterday: unapproved body blocked" 1 \
+    pr create --title t --body-file "${UNAPPROVED}"
+  assert_gate "expired yesterday: inline body blocked" 1 \
+    pr create --title t --body "inline text"
+  printf '2099-02-31\n' >"${SUSP}"
+  assert_gate "impossible date: unapproved body blocked" 1 \
+    pr create --title t --body-file "${UNAPPROVED}"
+  # Known-bad control: with the file gone the gate is armed again.
+  rm -f "${SUSP}"
+  assert_gate "no SUSPENDED file: unapproved body blocked (control)" 1 \
+    pr create --title t --body-file "${UNAPPROVED}"
+else
+  echo "SKIP: suspension cases — ${REAL_GATE} has no 'suspended' subcommand"
+fi
+
 # --- gate-review.sh absent: fails CLOSED --------------------------------------
 # A redundant pair whose halves disagree about the unverifiable case is not
 # redundant. Removing the gate must not turn the check into a pass.
@@ -174,6 +216,12 @@ mv "${GATE}" "${GATE}.hidden" 2>/dev/null || true
 assert_gate "gate-review.sh absent fails closed" 1 pr create --title t --body-file "${BODY}"
 # ...but a call with no body is still unaffected by the gate's absence.
 assert_gate "gate absent, no body, still allowed" 0 pr create --title "a title"
+# A SUSPENDED file cannot be read without gate-review.sh, so it must not
+# suspend anything on its own.
+printf '%s\n' "$(_day +1)" >"${SUSP}"
+assert_gate "gate absent, SUSPENDED present, still fails closed" 1 \
+  pr create --title t --body-file "${BODY}"
+rm -f "${SUSP}"
 mv "${GATE}.hidden" "${GATE}" 2>/dev/null || true
 
 if [[ "${fail}" == "0" ]]; then
