@@ -1181,8 +1181,8 @@ export -f opp # Exported - available inside CCCLI sessions
 # this file without env.sh.
 #
 # Output is a paged table on a terminal and JSON when piped; --text or --json
-# forces one. Any other argument passes through to `gh search`, e.g.
-# `my-issues --label bug`.
+# forces one. --help / -h prints usage. Any other argument passes through to
+# `gh search`, e.g. `my-issues --label bug`.
 #
 # Personal: each org is searched on its own, with GH_TOKEN_<ORG> when that is
 # set (claude-wrapper sets all three) and with the current gh auth otherwise
@@ -1214,6 +1214,24 @@ _gh_my_search() (
     case "${arg}" in
       --json) mode=json ;;
       --text) mode=text ;;
+      --help | -h)
+        cat <<EOF
+Usage: my-${kind} [--text | --json] [GH SEARCH ARGS...]
+
+List open ${kind} in unarchived repos, newest-updated first.
+  personal machine: every open item in twistedmelonman, smartwatermelon
+                    and nightowlstudiollc.
+  work machine:     every open item that involves andrewmrich.
+
+Options:
+  --text        Paged table (default on a terminal)
+  --json        JSON array (default when piped)
+  --help, -h    Show this help and exit
+
+Other arguments pass through to \`gh search ${kind}\`, e.g. --label bug.
+EOF
+        exit 0
+        ;;
       *) passthru+=("${arg}") ;;
     esac
   done
