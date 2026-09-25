@@ -44,6 +44,36 @@ _fail() {
 # fixture, and it mis-parses `init -b <branch>`.
 GIT=/usr/bin/git
 
+# Classify core.hooksPath in a config file as "absent", "empty", or its value.
+#
+# `git config --get` parses the file the way git itself does, unlike
+# `grep | cut`, which returned a single space (not empty string) for git's own
+# `\thooksPath = ` write and let `[[ -z ]]` pass the exact #239 failure mode
+# (dotfiles#304). `-u GIT_DIR/GIT_WORK_TREE/...` keeps this read from picking
+# up the inherited GIT_DIR this whole test file injects — `--get -f <file>`
+# already targets an explicit file over any repo-selection state, but the
+# unset makes that immunity explicit rather than incidental.
+#
+# "absent" (the key is not set at all) is treated as a clean result, not a
+# failure: an absent core.hooksPath means the fixture repo simply has no
+# opinion, which is not the contamination the tripwire exists for. Only a key
+# that IS present with an empty or whitespace-only value is the #239 failure
+# mode (dotfiles#304 confirms this is the intended property: core.hooksPath
+# must be non-empty; empty is the failure, absent is not).
+hookspath_probe() {
+  local config_file="$1" value
+  if value="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
+    "${GIT}" config -f "${config_file}" --get core.hooksPath 2>/dev/null)"; then
+    if [[ -z "${value//[[:space:]]/}" ]]; then
+      echo "empty"
+    else
+      echo "${value}"
+    fi
+  else
+    echo "absent"
+  fi
+}
+
 # Build a disposable repo with a linked worktree, and echo the worktree's
 # administrative git directory — the value git would export as GIT_DIR.
 #
@@ -94,6 +124,33 @@ config_fingerprint() {
   fi
   cksum <"${config}"
 }
+
+# --------------------------------------------------------------------------
+echo "Case: hookspath_probe catches git's own empty-value write (known-bad)"
+# --------------------------------------------------------------------------
+# Reproduces the exact bug this file's #239 check had: git writes an empty
+# value as `\thooksPath = `, not as an absent key. A detector that reads that
+# line with `grep | cut -d'=' -f2` gets a single space back, `[[ -z ]]` is
+# false, and the check passes on the exact contamination it exists to catch.
+selftest_config="${WORKDIR}/hookspath-selftest.git-config"
+mkdir -p "${WORKDIR}"
+"${GIT}" config -f "${selftest_config}" core.hooksPath ""
+
+selftest_result="$(hookspath_probe "${selftest_config}")"
+if [[ "${selftest_result}" == "empty" ]]; then
+  _pass "hookspath_probe reports 'empty' for git's own empty-value write"
+else
+  _fail "hookspath_probe reported '${selftest_result}' for git's own empty-value write, wanted 'empty'"
+fi
+
+# Show the old pipeline would have wrongly passed this exact fixture: it
+# returns a single space, which `[[ -z ]]` does not treat as empty.
+old_pipeline_value="$(grep '^[[:space:]]*hooksPath[[:space:]]*=' "${selftest_config}" | cut -d'=' -f2)"
+if [[ -z "${old_pipeline_value}" ]]; then
+  _fail "old grep|cut pipeline unexpectedly saw an empty value too — the regression this self-test guards against is gone; update the comment above"
+else
+  _pass "old grep|cut pipeline would have wrongly reported non-empty ('${old_pipeline_value}'), confirming this is the #239 regression the new probe fixes"
+fi
 
 # --------------------------------------------------------------------------
 echo "Case: control — an unguarded fixture write DOES contaminate"
@@ -225,6 +282,30 @@ for test_name in "${guarded_tests[@]}"; do
   else
     _pass "${test_name}: core.bare not set to true"
   fi
+
+  # core.hooksPath is the property that the uchg flag on .git/config was
+  # protecting. The incident left core.hooksPath empty in the shared config,
+  # silently disabling commit-time review (#239). This check validates that
+  # the git environment isolation guard prevents that contamination.
+  #
+  # Read with `git config -f <file> --get` (via hookspath_probe), not
+  # `grep | cut`, which returned a single space — not empty — for git's own
+  # empty-value write and let the #239 failure mode pass silently
+  # (dotfiles#304). An empty or missing core.hooksPath in the shared config
+  # is the exact failure mode the tripwire was guarding against; "absent" is
+  # not treated as a failure — see hookspath_probe's comment for why.
+  probe_hooks_status="$(hookspath_probe "${probe_root}/.git/config")"
+  case "${probe_hooks_status}" in
+    empty)
+      _fail "${test_name}: core.hooksPath is empty in shared config (the #239 failure mode)"
+      ;;
+    absent)
+      _pass "${test_name}: core.hooksPath not set in shared config (no contamination)"
+      ;;
+    *)
+      _pass "${test_name}: core.hooksPath is non-empty in shared config"
+      ;;
+  esac
 
   if "${GIT}" -C "${probe_root}" remote 2>/dev/null | grep -qx upstream; then
     _fail "${test_name}: added an 'upstream' remote to the fixture repo"
