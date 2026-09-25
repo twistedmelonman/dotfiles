@@ -34,6 +34,7 @@ mkdir -p "${HOME}/.config/gh"
 # ambient token here is not. Sandbox it the same way HOME is sandboxed, so the
 # cases exercise the hosts.yml path they are written to test.
 unset GH_TOKEN GITHUB_TOKEN CLAUDE_GH_TOKEN_LOGIN
+unset GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM
 
 # git init inside the sandboxed HOME must not pick up interactive prompts.
 export GIT_CONFIG_GLOBAL="${HOME}/.gitconfig"

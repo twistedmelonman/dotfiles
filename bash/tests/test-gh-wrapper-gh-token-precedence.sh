@@ -50,8 +50,16 @@ RUNNER_EOF
 # Run the driver in a clean child shell with the given VAR=VALUE assignments
 # applied. \`env\` is what isolates the environment, so nothing is exported into
 # a subshell whose scope is easy to misread.
+#
+# The per-owner tokens are cleared too. With GH_TOKEN_SWM set, the wrapper
+# selects it for this smartwatermelon fixture instead of checking GH_TOKEN's
+# identity (smartwatermelon/claude-wrapper#126), so every case below would
+# skip the check it exists to test. Selection is covered in
+# test-gh-wrapper-token-select.sh; these cases pin the fallback when the
+# owner's token is not set.
 _sync_under_env() {
-  env -u GH_TOKEN -u CLAUDE_GH_TOKEN_LOGIN "$@" bash "${RUNNER}"
+  env -u GH_TOKEN -u CLAUDE_GH_TOKEN_LOGIN \
+    -u GH_TOKEN_SWM -u GH_TOKEN_NOS -u GH_TOKEN_TWM "$@" bash "${RUNNER}"
 }
 
 # Case 1: no GH_TOKEN -> sync succeeds, as it does today.

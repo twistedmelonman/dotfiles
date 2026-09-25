@@ -100,6 +100,22 @@ _gh_wrapper_resolve_owner() {
     return 0
   fi
 
+  # `gh api` takes no -R; the repo it acts on is in the endpoint. The first
+  # argument shaped like `repos/OWNER/...` (leading slash optional) names the
+  # owner. Anchoring on `repos/` keeps flag values (`-X GET`, `-f k=v`,
+  # `--jq .x`) from matching. A `{owner}` placeholder is not an owner: gh fills
+  # it from cwd, so cwd decides, as below. smartwatermelon/claude-wrapper#126.
+  if [[ -z "${repo_flag_value}" && "${1:-}" == "api" ]]; then
+    local api_owner_re='^/?repos/([^/{}]+)(/|$)'
+    for arg in "${@:2}"; do
+      [[ "${arg}" == "--" ]] && break
+      if [[ "${arg}" =~ ${api_owner_re} ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+      fi
+    done
+  fi
+
   if [[ -n "${repo_flag_value}" ]]; then
     # -R/--repo takes OWNER/REPO or a full URL; owner is always the first
     # path segment after stripping any host/scheme prefix.
@@ -254,6 +270,19 @@ _gh_wrapper_resolve_switch_target() {
   printf '%s' "${desired}"
 }
 
+# The environment variable holding the fine-grained token for `owner`, or
+# nothing for an owner without one. claude-wrapper exports all three into an
+# agent session (_load_owner_gh_tokens); functions.sh's my_issues/my_prs use
+# the same names. The mapping is by resource owner, not by login.
+_gh_wrapper_owner_token_var() {
+  case "${1,,}" in
+    smartwatermelon) printf '%s\n' GH_TOKEN_SWM ;;
+    nightowlstudiollc) printf '%s\n' GH_TOKEN_NOS ;;
+    twistedmelonman) printf '%s\n' GH_TOKEN_TWM ;;
+    *) ;;
+  esac
+}
+
 # gh has one active account per host (not per repo), unlike git+SSH which
 # already resolves the right identity per remote via ~/.ssh/config host
 # aliases. This keeps gh in sync with that same per-repo intent.
@@ -275,9 +304,21 @@ _gh_wrapper_resolve_switch_target() {
 # run on every invocation. Caveat: this mutates global gh state, so
 # concurrent shells working in different-owner repos at the same time can
 # race each other.
+#
+# Token selection (smartwatermelon/claude-wrapper#126). When GH_TOKEN is set
+# and the resolved owner has its own fine-grained token in the environment
+# (see _gh_wrapper_owner_token_var), that token is used for this one call.
+# This function is the only place that decides it: it records the chosen
+# variable NAME in _gh_wrapper_token_var, and each mode applies it only to the
+# real gh process -- never exported into the caller's shell. A fine-grained
+# PAT binds to exactly one resource owner, so the launch token acting on any
+# other owner is a 403 at best; selection replaces the old owner-mismatch
+# refusal wherever a matching token exists. With GH_TOKEN unset, the keyring
+# stays in charge and nothing is selected.
 _gh_wrapper_sync_identity() {
   local owner desired current
 
+  _gh_wrapper_token_var=""
   owner="$(_gh_wrapper_resolve_owner "$@")"
   [[ -z "${owner}" ]] && return 0
 
@@ -301,18 +342,30 @@ _gh_wrapper_sync_identity() {
       ;;
   esac
 
-  # GH_TOKEN outranks the keyring identity that `gh auth switch` selects, so
-  # the hosts.yml check below verifies this function's own output rather than
-  # the auth `gh` will actually use. When a token is present and represents a
-  # different identity than the resolved owner needs, fail closed instead of
-  # silently acting as the wrong account.
+  # The owner's own token, when one is set, is the answer outright: it was
+  # issued for this owner, so there is no identity left to check and no
+  # `gh api user` round-trip to pay.
+  if [[ -n "${GH_TOKEN:-}" ]]; then
+    local owner_token_var
+    owner_token_var="$(_gh_wrapper_owner_token_var "${owner}")"
+    if [[ -n "${owner_token_var}" && -n "${!owner_token_var:-}" ]]; then
+      _gh_wrapper_token_var="${owner_token_var}"
+    fi
+  fi
+
+  # No owner token to select (an owner outside the three, or its variable is
+  # unset): GH_TOKEN is used as given. It outranks the keyring identity that
+  # `gh auth switch` selects, so the hosts.yml check below verifies this
+  # function's own output rather than the auth `gh` will actually use. When
+  # the token represents a different identity than the resolved owner needs,
+  # fail closed instead of silently acting as the wrong account.
   #
   # CLAUDE_GH_TOKEN_LOGIN names the identity GH_TOKEN authenticates as. The
   # test fixture sets it directly. In production it is unset, so the `gh api
   # user` fallback below resolves it — one network call per invocation. See
   # Step 11: session-level caching is a known follow-up, deliberately not
   # built here.
-  if [[ -n "${GH_TOKEN:-}" ]]; then
+  if [[ -n "${GH_TOKEN:-}" && -z "${_gh_wrapper_token_var}" ]]; then
     local token_login="${CLAUDE_GH_TOKEN_LOGIN:-}"
     # Why resolution failed, so the advice below can match the actual cause
     # instead of guessing "expired". Three paths reach the same dead end and
@@ -1012,6 +1065,15 @@ _gh_wrapper_run_with_scope_hint() {
     if [[ -n "${scope}" ]]; then
       _gh_wrapper_print_scope_hint "${scope}" "$@"
     fi
+    # No owner resolved means no token was selected: this ran with the
+    # launch-directory GH_TOKEN, which may belong to another owner. An agent
+    # that sees the failure tends to start trying the other GH_TOKEN_* values;
+    # stop it instead. Same resolver as selection, so the two cannot disagree
+    # on "no owner". The exit code is not changed.
+    # smartwatermelon/claude-wrapper#126 decision 3.
+    if [[ -n "${GH_TOKEN:-}" && -z "$(_gh_wrapper_resolve_owner "$@")" ]]; then
+      echo "[gh] No repo owner could be resolved, so this ran with the launch-directory GH_TOKEN and failed. Stop and ask Andrew for help; do not guess a different token." >&2
+    fi
   fi
   rm -f "${errfile}"
   return "${rc}"
@@ -1038,6 +1100,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # (which lands here). If a future change ever sets _GH_REVIEW_DONE before
   # running those checks in function mode, this skip becomes unsafe — keep
   # the two in lockstep.
+  # Set by _gh_wrapper_sync_identity; applied just before gh runs, below.
+  _gh_wrapper_token_var=""
   if [[ -z "${_GH_REVIEW_DONE:-}" ]]; then
     # Don't auto-switch identity while the user is managing accounts
     # directly, or for --help/-h — informational calls shouldn't mutate
@@ -1090,10 +1154,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     exit 1
   fi
 
-  # Token routing for claude-wrapper multi-org support
-  if [[ -n "${CLAUDE_GH_TOKEN_ROUTER:-}" ]] && [[ -f "${CLAUDE_GH_TOKEN_ROUTER}" ]]; then
-    # shellcheck source=/dev/null
-    source "${CLAUDE_GH_TOKEN_ROUTER}" "$@"
+  # Apply the token _gh_wrapper_sync_identity selected, for the real gh only.
+  # Set here, after the review hook, so both modes hand that hook the same
+  # token (function mode applies it only on its final `command gh`). Entered
+  # from function mode (_GH_REVIEW_DONE), this is "" and GH_TOKEN already
+  # carries the selection.
+  if [[ -n "${_gh_wrapper_token_var}" ]]; then
+    GH_TOKEN="${!_gh_wrapper_token_var}"
+    export GH_TOKEN
   fi
 
   # The F4 scope hint exists for one situation: an env-var token (GH_TOKEN, or
@@ -1124,6 +1192,9 @@ else
     # below must run regardless — `gh api pulls/123/merge --help` must not
     # escape it by appending --help.
     local help=0 arg
+    # Local, so _gh_wrapper_sync_identity's selection (dynamic scope) lives
+    # only as long as this call.
+    local _gh_wrapper_token_var=""
     for arg in "$@"; do
       if [[ "${arg}" == "--help" || "${arg}" == "-h" ]]; then
         help=1
@@ -1171,8 +1242,14 @@ else
 
     # Run the real gh command. Set _GH_REVIEW_DONE so the ~/.local/bin/gh
     # wrapper (found again via `command gh`, since ~/.local/bin is early in
-    # PATH) does not run the review a second time.
-    _GH_REVIEW_DONE=1 command gh "$@"
+    # PATH) does not run the review a second time. A selected token is
+    # passed as a prefix assignment, so it reaches gh without changing the
+    # caller's GH_TOKEN.
+    if [[ -n "${_gh_wrapper_token_var}" ]]; then
+      GH_TOKEN="${!_gh_wrapper_token_var}" _GH_REVIEW_DONE=1 command gh "$@"
+    else
+      _GH_REVIEW_DONE=1 command gh "$@"
+    fi
   }
   # Escape hatch to the real gh binary, bypassing identity auto-switch and
   # the merge guard entirely — same idea as suclaude for the claude wrapper.
@@ -1188,6 +1265,6 @@ else
   # its own body into subshells, not functions it calls. Without exporting
   # these too, gh() would break in any subshell that inherits the exported
   # gh but didn't source this file (e.g. BASH_ENV unset/overridden there).
-  export -f gh sugh _gh_wrapper_block_bypass _gh_wrapper_approval_gate _gh_wrapper_api_body_fields _gh_wrapper_maybe_review _gh_wrapper_review_script_path _gh_wrapper_sync_identity _gh_wrapper_find_real_gh _gh_wrapper_resolve_owner _gh_wrapper_force_draft_for_off_org _gh_wrapper_is_beacon_context _gh_wrapper_beacon_dir_is_explicit _gh_wrapper_keyring_login _gh_wrapper_keyring_users _gh_wrapper_resolve_switch_target _gh_wrapper_run_with_scope_hint _gh_wrapper_scope_from_file _gh_wrapper_print_scope_hint _gh_wrapper_redact_argv _gh_wrapper_redact_value
+  export -f gh sugh _gh_wrapper_block_bypass _gh_wrapper_approval_gate _gh_wrapper_api_body_fields _gh_wrapper_maybe_review _gh_wrapper_review_script_path _gh_wrapper_sync_identity _gh_wrapper_owner_token_var _gh_wrapper_find_real_gh _gh_wrapper_resolve_owner _gh_wrapper_force_draft_for_off_org _gh_wrapper_is_beacon_context _gh_wrapper_beacon_dir_is_explicit _gh_wrapper_keyring_login _gh_wrapper_keyring_users _gh_wrapper_resolve_switch_target _gh_wrapper_run_with_scope_hint _gh_wrapper_scope_from_file _gh_wrapper_print_scope_hint _gh_wrapper_redact_argv _gh_wrapper_redact_value
   export _gh_wrapper_review_script GH_WRAPPER_BEACON_DIR _GH_WRAPPER_BEACON_DIR_DEFAULT
 fi
