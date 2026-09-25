@@ -132,13 +132,13 @@ cd "${HOME}/neutral-cwd"
 
 # --- Tier 1: explicitly-claimed owners -------------------------------------
 # These win in both directions and must never depend on cwd. "Wrong current"
-# fixtures use andrewmrich, not twistedmelonman: twistedmelonman/dotfiles is
+# fixtures use andrewmrich, not smartwatermelon: smartwatermelon/dotfiles is
 # claimed by twistedmelonman regardless of which of the three org logins
 # hosts.yml currently holds.
-assert_desired "twistedmelonman dotfiles" "andrewmrich" "twistedmelonman/dotfiles" "twistedmelonman"
+assert_desired "lowercase smartwatermelon" "andrewmrich" "smartwatermelon/dotfiles" "twistedmelonman"
 assert_desired "lowercase nightowlstudiollc" "andrewmrich" "nightowlstudiollc/kebab-tax" "twistedmelonman"
 assert_desired "lowercase twistedmelonman" "andrewmrich" "twistedmelonman/old-archived" "twistedmelonman"
-assert_desired "already twistedmelonman stays" "twistedmelonman" "twistedmelonman/dotfiles" "twistedmelonman"
+assert_desired "already twistedmelonman stays" "twistedmelonman" "smartwatermelon/dotfiles" "twistedmelonman"
 assert_desired "beacon-biosignals org" "twistedmelonman" "beacon-biosignals/somerepo" "andrewmrich"
 # The git-pkgs-proxy case: a fork created during Beacon work, owned by
 # andrewmrich rather than the beacon-biosignals org.
@@ -153,7 +153,7 @@ assert_desired "mixed-case Beacon-BioSignals" "twistedmelonman" "Beacon-BioSigna
 assert_desired "mixed-case AndrewMRich" "twistedmelonman" "AndrewMRich/git-pkgs-proxy" "andrewmrich"
 
 # Post-rename: the old login is just another wrong identity.
-assert_desired "stale smartwatermelon hosts.yml is switched" "smartwatermelon" "twistedmelonman/dotfiles" "twistedmelonman"
+assert_desired "stale smartwatermelon hosts.yml is switched" "smartwatermelon" "smartwatermelon/dotfiles" "twistedmelonman"
 
 # --- Tier 3: default ---------------------------------------------------------
 # An owner claimed by neither identity, with no Beacon context, defaults to
@@ -196,10 +196,10 @@ assert_desired_in "${other_fork}" "unrelated upstream does not count as beacon" 
 # --- Tier 1 beats Tier 2 -----------------------------------------------------
 # An explicitly-claimed owner is authoritative even from inside a beacon
 # checkout: the heuristic must not hijack a repo you clearly own. This keeps
-# `gh -R twistedmelonman/dotfiles ...` meaning the same thing from any
-# directory (twistedmelonman/dotfiles#135).
+# `gh -R smartwatermelon/dotfiles ...` meaning the same thing from any
+# directory (smartwatermelon/dotfiles#135).
 assert_desired_in "${beacon_repo}" "claimed owner beats beacon cwd" \
-  "andrewmrich" "twistedmelonman/dotfiles" "twistedmelonman"
+  "andrewmrich" "smartwatermelon/dotfiles" "twistedmelonman"
 
 cd "${HOME}/neutral-cwd"
 

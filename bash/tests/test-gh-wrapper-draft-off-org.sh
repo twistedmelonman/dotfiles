@@ -52,7 +52,7 @@ assert_args() {
 }
 
 # In-org, explicit -R: no draft forced.
-assert_args "in-org explicit --repo" 0 pr create --repo twistedmelonman/dotfiles --title x
+assert_args "in-org explicit --repo" 0 pr create --repo smartwatermelon/dotfiles --title x
 
 # Off-org, explicit --repo=: draft forced.
 assert_args "off-org explicit --repo=" 1 pr create --repo=someoutsideorg/foo --title x
@@ -81,11 +81,11 @@ assert_args "off-org pr create --help (function itself is harmless)" 1 pr create
 # once more isn't required to be deduped, just confirm it's present.
 assert_args "off-org pr create with explicit --draft already present" 1 pr create --repo someoutsideorg/foo --draft --title x
 
-# Regression for twistedmelonman/dotfiles#186: a --body value containing
+# Regression for smartwatermelon/dotfiles#186: a --body value containing
 # embedded newlines must survive the arg-list rebuild intact as a single
 # argument, not get shredded into multiple positional params at each \n.
 multiline_body="$(printf 'line one\nline two\nline three')"
-mapfile -t -d '' multiline_got < <(_gh_wrapper_force_draft_for_off_org pr create --repo twistedmelonman/dotfiles --title x --body "${multiline_body}" || true)
+mapfile -t -d '' multiline_got < <(_gh_wrapper_force_draft_for_off_org pr create --repo smartwatermelon/dotfiles --title x --body "${multiline_body}" || true)
 if [[ "${#multiline_got[@]}" == "8" && "${multiline_got[7]}" == "${multiline_body}" ]]; then
   echo "PASS: multi-line --body value survives arg rebuild intact"
 else
@@ -117,7 +117,7 @@ mkdir -p "${off_org_clone}" "${in_org_clone}"
 # abort. This form is unambiguous on both.
 trap 'rm -rf "${off_org_clone}" "${in_org_clone}" ${cwd_status_dir:+"${cwd_status_dir}"}' EXIT
 (cd "${off_org_clone}" && command git init -q && command git remote add origin git@github.com:someoutsideorg/foo.git)
-(cd "${in_org_clone}" && command git init -q && command git remote add origin git@github.com:twistedmelonman/dotfiles.git)
+(cd "${in_org_clone}" && command git init -q && command git remote add origin git@github.com:smartwatermelon/dotfiles.git)
 
 # `fail` is set inside subshells, so it cannot propagate back by assignment.
 # It travels through the filesystem instead — and the direction matters.
